@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-python -W ignore three_ProINCD_train_tinyimagenet.py \
+python -W ignore incd_2step_tinyimagenet.py \
         --dataset_root ./data/datasets/tiny-imagenet-200/ \
         --exp_root ./data/experiments/ \
         --warmup_model_dir ./data/experiments/supervised_learning_wo_ssl/warmup_TinyImageNet_resnet_wo_ssl.pth \
@@ -28,7 +28,7 @@ python -W ignore three_ProINCD_train_tinyimagenet.py \
         --wandb_entity oatmealliu \
         --step first
 
-python -W ignore three_ProINCD_train_tinyimagenet.py \
+python -W ignore incd_2step_tinyimagenet.py \
         --dataset_root ./data/datasets/tiny-imagenet-200/ \
         --exp_root ./data/experiments/ \
         --warmup_model_dir ./data/experiments/supervised_learning_wo_ssl/warmup_TinyImageNet_resnet_wo_ssl.pth \
@@ -55,4 +55,4 @@ python -W ignore three_ProINCD_train_tinyimagenet.py \
         --wandb_mode online \
         --wandb_entity oatmealliu \
         --step second \
-        --first_step_dir ./data/experiments/three_ProINCD_train_tinyimagenet_tinyimagenet/first_ProINCD_1st_OG_kd10_p1_tinyimagenet.pth
+        --first_step_dir ./data/experiments/incd_2step_tinyimagenet_tinyimagenet/first_ProINCD_1st_OG_kd10_p1_tinyimagenet.pth

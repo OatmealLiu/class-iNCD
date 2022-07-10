@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-python -W ignore three_ProINCD_train_cifar100.py \
+python -W ignore incd_2step_cifar100.py \
         --dataset_root ./data/datasets/CIFAR/ \
         --exp_root ./data/experiments/ \
         --warmup_model_dir ./data/experiments/supervised_learning_wo_ssl/warmup_cifar100_resnet_wo_ssl.pth \
@@ -28,7 +28,7 @@ python -W ignore three_ProINCD_train_cifar100.py \
         --wandb_entity oatmealliu \
         --step first
 
-python -W ignore three_ProINCD_train_cifar100.py \
+python -W ignore incd_2step_cifar100.py \
         --dataset_root ./data/datasets/CIFAR/ \
         --exp_root ./data/experiments/ \
         --warmup_model_dir ./data/experiments/supervised_learning_wo_ssl/warmup_cifar100_resnet_wo_ssl.pth \
@@ -55,5 +55,5 @@ python -W ignore three_ProINCD_train_cifar100.py \
         --wandb_mode online \
         --wandb_entity oatmealliu \
         --step second \
-        --first_step_dir ./data/experiments/three_ProINCD_train_cifar100_cifar100/first_ProINCD_1st_OG_kd10_p1_cifar100.pth
+        --first_step_dir ./data/experiments/incd_2step_cifar100_cifar100/first_ProINCD_1st_OG_kd10_p1_cifar100.pth
 
