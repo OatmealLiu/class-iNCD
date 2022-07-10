@@ -21,23 +21,8 @@ conda activate iNCD
 ```
 
 ### Dataset
-By default, we put the datasets in `./data/datasets/` and save trained models in `./data/experiments/` (soft link is suggested). You may also use any other directories you like by setting the `--dataset_root` argument to `/your/data/path/`, and the `--exp_root` argument to `/your/experiment/path/` when running all experiments below.
-
-- For CIFAR-10 and CIFAR-100, simply download the datasets and put into `./data/datasets/`.
-
-- For TinyImagenet, to download and generate image folders, please follow https://github.com/tjmoon0104/pytorch-tiny-imagenet
-
-- For ImageNet, we provide the exact split files used in the experiments following existing work. To download the split files, run the command:
-``
-sh scripts/download_imagenet_splits.sh
-``
-. The ImageNet dataset folder is organized in the following way:
-
-    ```
-    ImageNet/imagenet_rand118 #downloaded by the above command
-    ImageNet/images/train #standard ImageNet training split
-    ImageNet/images/val #standard ImageNet validation split
-    ```
+- For CIFAR-10 and CIFAR-100 simply download the datasets and put into `./data/datasets/`.
+- For TinyImagenet, to download and generate image folders to `./data/datasets/`. Please follow https://github.com/tjmoon0104/pytorch-tiny-imagenet
 
 ## Training and Testing
 ![](figures/setting.png)
