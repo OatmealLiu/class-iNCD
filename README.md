@@ -23,7 +23,7 @@ conda activate iNCD
 ### Dataset
 By default, we put the datasets in `./data/datasets/` and save trained models in `./data/experiments/` (soft link is suggested). You may also use any other directories you like by setting the `--dataset_root` argument to `/your/data/path/`, and the `--exp_root` argument to `/your/experiment/path/` when running all experiments below.
 
-- For CIFAR-10, CIFAR-100, and SVHN, simply download the datasets and put into `./data/datasets/`.
+- For CIFAR-10 and CIFAR-100, simply download the datasets and put into `./data/datasets/`.
 
 - For TinyImagenet, to download and generate image folders, please follow https://github.com/tjmoon0104/pytorch-tiny-imagenet
 
