@@ -3,7 +3,7 @@
 >
 > Subhankar Roy, Mingxuan Liu, Zhun Zhong, Nicu Sebe, and Elisa Ricci
 
-This Github repository presents the PyTorch implementation for the paper [Class-incremental Novel Class Discovery](), accepted with a poster presentation at European Conference on Computer Vision (ECCV) held at Tel Aviv International Convention Center on October 23-27, 2022.
+This Github repository presents the PyTorch implementation for the paper **Class-incremental Novel Class Discovery** \[[arXiv](https://arxiv.org/abs/2207.08605)\], accepted with a poster presentation at European Conference on Computer Vision (ECCV) held at Tel Aviv International Convention Center on October 23-27, 2022.
 
 ![](figures/framework.png)
 
@@ -91,7 +91,7 @@ Table 5: Ablation study on having a single and separated heads for old and new c
 
 ### Citation
 ```
-@inproceedings{incd2022,
+@inproceedings{roy2022class,
   title={Class-incremental Novel Class Discovery},
   author={Roy, Subhankar and Liu, Mingxuan and Zhong, Zhun and Sebe, Nicu and Ricci, Elisa},
   booktitle={Proceedings of the European Conference on Computer Vision (ECCV)},
