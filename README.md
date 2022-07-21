@@ -25,6 +25,16 @@ conda activate iNCD
 ```
 
 ### Dataset
+Option 1
+- Download our prepared datasets (CIFAR-10, CIFAR-100 and TinyImagenet) from drive: https://drive.google.com/file/d/1o73ehAii6AJpJQ5tMwfywE2JBiFC3Bv7/view?usp=sharing
+- Move the downloaded `datasets.zip` file to `./data/` folder.
+```shell
+# cd to the repository root
+cd data
+unzip datasets.zip
+```
+Option 2
+
 - For CIFAR-10 and CIFAR-100 simply download the datasets and put into `./data/datasets/`.
 - For TinyImagenet, to download and generate image folders to `./data/datasets/`. Please follow https://github.com/tjmoon0104/pytorch-tiny-imagenet
 
