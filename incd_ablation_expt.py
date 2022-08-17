@@ -29,21 +29,19 @@ def train_AutoNovel(model, old_model, train_loader, labeled_eval_loader, unlabel
     optimizer = SGD(filter(lambda p: p.requires_grad, model.parameters()),
                          lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
     exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)
-    criterion1 = nn.CrossEntropyLoss()  # CE loss for labeled data
-    criterion2 = BCE()  # BCE loss for unlabeled data
+    criterion1 = nn.CrossEntropyLoss()
+    criterion2 = BCE()
 
-    # START training epoch-by-epoch
     for epoch in range(args.epochs):
         # create loss statistics recorder for each loss
-        loss_bce_record = AverageMeter()  # BCE loss recorder
-        consistency_loss_record = AverageMeter()  # MSE consistency loss recorder
+        loss_bce_record = AverageMeter()            # BCE loss recorder
+        consistency_loss_record = AverageMeter()    # MSE consistency loss recorder
 
         # turn on the training mode of the model
         model.train()
         exp_lr_scheduler.step()
         w = args.rampup_coefficient * ramps.sigmoid_rampup(epoch, args.rampup_length)
 
-        # START learning batch-by-batch
         for batch_idx, ((x, x_bar), label, idx) in enumerate(tqdm(train_loader)):
             # send the vars to GPU
             x, x_bar, label = x.to(device), x_bar.to(device), label.to(device)
@@ -67,18 +65,14 @@ def train_AutoNovel(model, old_model, train_loader, labeled_eval_loader, unlabel
             else:
                 model.l2_classifier = False
 
-            # LOOK: now, x only contains unlabeled data
-            output1, output2, feat = model(x)  # outputs of x from head-1 and head-2 and extracted feat
-            # for unlabeled data
-            output1_bar, output2_bar, feat_bar = model(x_bar)  # outputs of x_bar from head-1 and head-2 and extracted feat
-            # for unlabeled data
+            output1, output2, feat = model(x)                   # outputs of x from head-1 and head-2 and extracted feat
+            output1_bar, output2_bar, feat_bar = model(x_bar)   # outputs of x_bar from head-1 and head-2 and extracted feat
 
             # use softmax to get the probability distribution for each head
             prob1, prob1_bar = F.softmax(output1, dim=1), F.softmax(output1_bar, dim=1)
             prob2, prob2_bar = F.softmax(output2, dim=1), F.softmax(output2_bar, dim=1)
 
             # calculate rank statistics
-            # first cut the gradient propagation of the feat
             rank_feat = (feat).detach()
 
             rank_idx = torch.argsort(rank_feat, dim=1, descending=True)
@@ -99,47 +93,41 @@ def train_AutoNovel(model, old_model, train_loader, labeled_eval_loader, unlabel
 
             # get the pseudo label from head-2
             loss_bce = criterion2(prob1_ulb, prob2_ulb, target_ulb)
-            consistency_loss = F.mse_loss(prob2, prob2_bar)  # + F.mse_loss(prob1, prob1_bar)
+            consistency_loss = F.mse_loss(prob2, prob2_bar)         # + F.mse_loss(prob1, prob1_bar)
 
             # record the losses
             loss_bce_record.update(loss_bce.item(), prob1_ulb.size(0))
             consistency_loss_record.update(consistency_loss.item(), prob2.size(0))
 
-            # LOOK: Total loss = CE_add loss + BCE loss + weighted-MSE-Consistency loss + CE_la loss + KD loss
             loss = loss_bce + w * consistency_loss
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            # END of current batch
 
-        # complete the current epoch and record training statistics
         # wandb loss logging
         wandb.log({
                    "loss/bce": loss_bce_record.avg,
                    "loss/consistency": consistency_loss_record.avg,
                    }, step=epoch)
 
-        # validation for unlabeled data with Backbone(on-the-fly) + head-2(on-the-fly)
         print('Head2: test on unlabeled classes')
         args.head = 'head2'
         acc_head2_ul, ind = test(model, unlabeled_eval_loader, args, return_ind=True)
 
-        # validation for labeled data with Backbone(on-the-fly) + head-1(frozen)
         print('Head1: test on labeled classes')
         args.head = 'head1'
         acc_head1_lb = test(model, labeled_eval_loader, args, cluster=False)
 
-        # validation for unlabeled data with Backbone(on-the-fly) + head-1(frozen)
         print('Head1: test on unlabeled classes')
         acc_head1_ul = test(model, unlabeled_eval_loader, args, cluster=False, ind=ind)
 
-        # validation for all
         print('Head1: test on all classes w/o clustering')
         acc_head1_all_wo_cluster = test(model, all_eval_loader, args, cluster=False, ind=ind)
 
         print('Head1: test on all classes w/ clustering')
         acc_head1_all_w_cluster = test(model, all_eval_loader, args, cluster=True)
+
         # wandb metrics logging
         wandb.log({
             "val_acc/head2_ul": acc_head2_ul,
@@ -153,7 +141,6 @@ def train_AutoNovel(model, old_model, train_loader, labeled_eval_loader, unlabel
             "misc/w_ramp": w
         }, step=epoch)
 
-        # END of the current epoch
 
 def train_OGwoPseudo(model, old_model, train_loader, labeled_eval_loader, unlabeled_eval_loader, all_eval_loader,
                     class_mean, class_sig, class_cov, args):
@@ -162,19 +149,18 @@ def train_OGwoPseudo(model, old_model, train_loader, labeled_eval_loader, unlabe
     print("=" * 100)
 
     optimizer = SGD(model.parameters(), lr=args.lr, momentum=args.momentum,
-                    weight_decay=args.weight_decay)  # SGD optimizer
-    exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)  # LR scheduler
+                    weight_decay=args.weight_decay)
+    exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)
     criterion1 = nn.CrossEntropyLoss()  # CE loss for labeled data
-    criterion2 = BCE()  # BCE loss for unlabeled data
+    criterion2 = BCE()                  # BCE loss for unlabeled data
 
-    # START training epoch-by-epoch
     for epoch in range(args.epochs):
         # create loss statistics recorder for each loss
-        loss_kd_record = AverageMeter()                 # KD loss recorder
-        loss_record = AverageMeter()  # Total loss recorder
-        # loss_ce_add_record = AverageMeter()  # CE loss recorder
-        loss_bce_record = AverageMeter()  # BCE loss recorder
-        consistency_loss_record = AverageMeter()  # MSE consistency loss recorder
+        loss_kd_record = AverageMeter()             # KD loss recorder
+        loss_record = AverageMeter()                # Total loss recorder
+        # loss_ce_add_record = AverageMeter()       # CE loss recorder
+        loss_bce_record = AverageMeter()            # BCE loss recorder
+        consistency_loss_record = AverageMeter()    # MSE consistency loss recorder
 
         # turn on the training mode of the model
         model.train()
@@ -185,9 +171,7 @@ def train_OGwoPseudo(model, old_model, train_loader, labeled_eval_loader, unlabe
         # update ramp-up coefficient for the current epoch
         w = args.rampup_coefficient * ramps.sigmoid_rampup(epoch, args.rampup_length)
 
-        # START learning batch-by-batch
         for batch_idx, ((x, x_bar), label, idx) in enumerate(tqdm(train_loader)):
-            # send the vars to GPU
             x, x_bar, label = x.to(device), x_bar.to(device), label.to(device)
             # create a mask for labeled data
             mask_lb = label < args.num_labeled_classes
@@ -209,16 +193,14 @@ def train_OGwoPseudo(model, old_model, train_loader, labeled_eval_loader, unlabe
             else:
                 model.l2_classifier = False
 
-            # LOOK: now, x only contains unlabeled data
-            output1, output2, feat = model(x)  # outputs of x from head-1 and head-2 and extracted feat
-            # for unlabeled data
-            output1_bar, output2_bar, feat_bar = model(x_bar)  # outputs of x_bar from head-1 and head-2 and extracted feat
+            output1, output2, feat = model(x)                   # outputs of x from head-1 and head-2 and extracted feat
+            output1_bar, output2_bar, feat_bar = model(x_bar)   # outputs of x_bar from head-1 and head-2 and extracted feat
+
             # use softmax to get the probability distribution for each head
             prob1, prob1_bar = F.softmax(output1, dim=1), F.softmax(output1_bar, dim=1)
             prob2, prob2_bar = F.softmax(output2, dim=1), F.softmax(output2_bar, dim=1)
 
             # calculate rank statistics
-            # first cut the gradient propagation of the feat
             rank_feat = (feat).detach()
 
             rank_idx = torch.argsort(rank_feat, dim=1, descending=True)
@@ -237,40 +219,31 @@ def train_OGwoPseudo(model, old_model, train_loader, labeled_eval_loader, unlabe
             prob1_ulb, _ = PairEnum(prob2)
             _, prob2_ulb = PairEnum(prob2_bar)
 
-            # get the pseudo label from head-2
-            # label = (output2).detach().max(1)[1] + args.num_labeled_classes
-
-            # loss_ce_add = 0
             loss_bce = criterion2(prob1_ulb, prob2_ulb, target_ulb)
             consistency_loss = F.mse_loss(prob2, prob2_bar)  # + F.mse_loss(prob1, prob1_bar)
 
             # record the losses
-            # loss_ce_add_record.update(loss_ce_add.item(), output1.size(0))
             loss_bce_record.update(loss_bce.item(), prob1_ulb.size(0))
             consistency_loss_record.update(consistency_loss.item(), prob2.size(0))
 
-            # LOOK: Incremental loss calculation
             if args.labeled_center > 0:
-                labeled_feats, labeled_labels = sample_labeled_features(class_mean, class_sig, args)  # Prototype
+                labeled_feats, labeled_labels = sample_labeled_features(class_mean, class_sig, args)
                 labeled_output1 = model.forward_feat(labeled_feats)
                 loss_ce_la = args.lambda_proto * criterion1(labeled_output1, labeled_labels)
             else:
                 loss_ce_la = 0
 
-            # LOOK: KD loss calculation
             if args.w_kd > 0:
                 _, _, old_feat = old_model(x)
                 size_1, size_2 = old_feat.size()
                 loss_kd = torch.dist(F.normalize(old_feat.view(size_1 * size_2, 1), dim=0),
                                      F.normalize(feat.view(size_1 * size_2, 1), dim=0)) * args.w_kd
-                # print (loss_kd)
             else:
                 loss_kd = torch.tensor(0.0)
 
             # record losses
             loss_kd_record.update(loss_kd.item(), x.size(0))
 
-            # LOOK: Total loss = CE_add loss + BCE loss + weighted-MSE-Consistency loss + CE_la loss + KD loss
             loss = loss_bce + w * consistency_loss + loss_ce_la + loss_kd
 
             if args.labeled_center > 0 and isinstance(loss_ce_la, torch.Tensor):
@@ -278,13 +251,10 @@ def train_OGwoPseudo(model, old_model, train_loader, labeled_eval_loader, unlabe
 
             # zero gradients
             optimizer.zero_grad()
-            # calculate gradients w.r.t. parameters of Backbone + head-2 (head-1 is frozen)
             loss.backward()
             # update the parameters
             optimizer.step()
-            # END of current batch
 
-        # complete the current epoch and record training statistics
         # wandb loss logging
         wandb.log({#"loss/pseudo-unlab": loss_ce_add_record.avg,
                    "loss/bce": loss_bce_record.avg,
@@ -295,27 +265,23 @@ def train_OGwoPseudo(model, old_model, train_loader, labeled_eval_loader, unlabe
 
         print('Train Epoch: {} Avg Loss: {:.4f}'.format(epoch, loss_record.avg))
 
-        # validation for unlabeled data with Backbone(on-the-fly) + head-2(on-the-fly)
         print('Head2: test on unlabeled classes')
         args.head = 'head2'
         acc_head2_ul, ind = test(model, unlabeled_eval_loader, args, return_ind=True)
-        #######
 
-        # validation for labeled data with Backbone(on-the-fly) + head-1(frozen)
         print('Head1: test on labeled classes')
         args.head = 'head1'
         acc_head1_lb = test(model, labeled_eval_loader, args, cluster=False)
 
-        # validation for unlabeled data with Backbone(on-the-fly) + head-1(frozen)
         print('Head1: test on unlabeled classes')
         acc_head1_ul = test(model, unlabeled_eval_loader, args, cluster=False, ind=ind)
 
-        # validation for all
         print('Head1: test on all classes w/o clustering')
         acc_head1_all_wo_cluster = test(model, all_eval_loader, args, cluster=False, ind=ind)
 
         print('Head1: test on all classes w/ clustering')
         acc_head1_all_w_cluster = test(model, all_eval_loader, args, cluster=True)
+
         # wandb metrics logging
         wandb.log({
             "val_acc/head2_ul": acc_head2_ul,
@@ -329,7 +295,6 @@ def train_OGwoPseudo(model, old_model, train_loader, labeled_eval_loader, unlabe
             "misc/w_ramp": w
         }, step=epoch)
 
-        # END of the current epoch
 
 def train_LwF_Proto(model, old_model, train_loader, labeled_eval_loader, unlabeled_eval_loader, all_eval_loader,
                     class_mean, class_sig, class_cov, args):
@@ -342,14 +307,13 @@ def train_LwF_Proto(model, old_model, train_loader, labeled_eval_loader, unlabel
     criterion1 = nn.CrossEntropyLoss()
     criterion2 = BCE()
 
-    # START training epoch-by-epoch
     for epoch in range(args.epochs):
         # create loss statistics recorder for each loss
-        loss_record = AverageMeter()                    # Total loss recorder
-        loss_ce_add_record = AverageMeter()  # CE loss recorder
-        loss_bce_record = AverageMeter()  # BCE loss recorder
-        consistency_loss_record = AverageMeter()  # MSE consistency loss recorder
-        loss_kd_record = AverageMeter()  # KD loss recorder
+        loss_record = AverageMeter()                # Total loss recorder
+        loss_ce_add_record = AverageMeter()         # CE loss recorder
+        loss_bce_record = AverageMeter()            # BCE loss recorder
+        consistency_loss_record = AverageMeter()    # MSE consistency loss recorder
+        loss_kd_record = AverageMeter()             # KD loss recorder
 
         # turn on the training mode of the model
         model.train()
@@ -359,7 +323,6 @@ def train_LwF_Proto(model, old_model, train_loader, labeled_eval_loader, unlabel
         # update ramp-up coefficient for the current epoch
         w = args.rampup_coefficient * ramps.sigmoid_rampup(epoch, args.rampup_length)
 
-        # START learning batch-by-batch
         for batch_idx, ((x, x_bar), label, idx) in enumerate(tqdm(train_loader)):
             # send the vars to GPU
             x, x_bar, label = x.to(device), x_bar.to(device), label.to(device)
@@ -389,7 +352,6 @@ def train_LwF_Proto(model, old_model, train_loader, labeled_eval_loader, unlabel
             prob2, prob2_bar = F.softmax(output2, dim=1), F.softmax(output2_bar, dim=1)
 
             # calculate rank statistics
-            # first cut the gradient propagation of the feat
             rank_feat = (feat).detach()
 
             rank_idx = torch.argsort(rank_feat, dim=1, descending=True)
@@ -411,7 +373,6 @@ def train_LwF_Proto(model, old_model, train_loader, labeled_eval_loader, unlabel
             # get the pseudo label from head-2
             label = (output2).detach().max(1)[1] + args.num_labeled_classes
 
-            # LOOK: CE_add(head-1 only) loss, BCE(head-2 only) loss, MSE consistency(head-2 only) loss calculation
             loss_ce_add = w * criterion1(output1, label) / args.rampup_coefficient * args.increment_coefficient
             loss_bce = criterion2(prob1_ulb, prob2_ulb, target_ulb)
             consistency_loss = F.mse_loss(prob2, prob2_bar)  # + F.mse_loss(prob1, prob1_bar)
@@ -421,17 +382,14 @@ def train_LwF_Proto(model, old_model, train_loader, labeled_eval_loader, unlabel
             loss_bce_record.update(loss_bce.item(), prob1_ulb.size(0))
             consistency_loss_record.update(consistency_loss.item(), prob2.size(0))
 
-            # LOOK: Incremental loss calculation
             if args.labeled_center > 0:
-                labeled_feats, labeled_labels = sample_labeled_features(class_mean, class_sig, args)  # Prototype
+                labeled_feats, labeled_labels = sample_labeled_features(class_mean, class_sig, args)
                 labeled_output1 = model.forward_feat(labeled_feats)
                 loss_ce_la = args.lambda_proto * criterion1(labeled_output1, labeled_labels)
             else:
                 loss_ce_la = 0
 
-            # LOOK: LwF KD loss calculation
             if args.w_kd > 0:
-                # EXPT: LwF logits-KD
                 # old_output1, _, _ = old_model(x)
                 # size_1, size_2 = old_output1.size()
                 # loss_kd = torch.dist(F.normalize(old_output1.view(size_1 * size_2, 1), dim=0),
@@ -468,9 +426,6 @@ def train_LwF_Proto(model, old_model, train_loader, labeled_eval_loader, unlabel
             # update the parameters
             optimizer.step()
 
-            # END of current batch
-
-        # complete the current epoch and record training statistics
         # wandb loss logging
         wandb.log({"loss/pseudo-unlab": loss_ce_add_record.avg,
                    "loss/bce": loss_bce_record.avg,
@@ -479,26 +434,23 @@ def train_LwF_Proto(model, old_model, train_loader, labeled_eval_loader, unlabel
                    "loss/LwF_logits_kd": loss_kd_record.avg
                    }, step=epoch)
 
-        # validation for unlabeled data with Backbone(on-the-fly) + head-2(on-the-fly)
         print('Head2: test on unlabeled classes')
         args.head = 'head2'
         acc_head2_ul, ind = test(model, unlabeled_eval_loader, args, return_ind=True)
 
-        # validation for labeled data with Backbone(on-the-fly) + head-1(frozen)
         print('Head1: test on labeled classes')
         args.head = 'head1'
         acc_head1_lb = test(model, labeled_eval_loader, args, cluster=False)
 
-        # validation for unlabeled data with Backbone(on-the-fly) + head-1(frozen)
         print('Head1: test on unlabeled classes')
         acc_head1_ul = test(model, unlabeled_eval_loader, args, cluster=False, ind=ind)
 
-        # validation for all
         print('Head1: test on all classes w/o clustering')
         acc_head1_all_wo_cluster = test(model, all_eval_loader, args, cluster=False, ind=ind)
 
         print('Head1: test on all classes w/ clustering')
         acc_head1_all_w_cluster = test(model, all_eval_loader, args, cluster=True)
+
         # wandb metrics logging
         wandb.log({
             "val_acc/head2_ul": acc_head2_ul,
@@ -512,7 +464,6 @@ def train_LwF_Proto(model, old_model, train_loader, labeled_eval_loader, unlabel
             "misc/w_ramp": w
         }, step=epoch)
 
-        # END of the current epoch
 
 
 def train_SplitHead12(model, old_model, train_loader, labeled_eval_loader, unlabeled_eval_loader, all_eval_loader,
@@ -521,549 +472,18 @@ def train_SplitHead12(model, old_model, train_loader, labeled_eval_loader, unlab
     print("\t\t\t\tCiao bella! I am Splited Head1 and Head2. I need to be manually concatenated! I don't have pseudo label loss.")
     print("=" * 100)
 
-    optimizer = SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)  # SGD optimizer
-    exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)  # LR scheduler
-    criterion1 = nn.CrossEntropyLoss()  # CE loss for labeled data
-    criterion2 = BCE()  # BCE loss for unlabeled data
-
-    # START training epoch-by-epoch
-    for epoch in range(args.epochs):
-        # create loss statistics recorder for each loss
-        loss_record = AverageMeter()  # Total loss recorder
-        # loss_ce_add_record = AverageMeter()  # CE loss recorder
-        loss_bce_record = AverageMeter()  # BCE loss recorder
-        consistency_loss_record = AverageMeter()  # MSE consistency loss recorder
-        loss_kd_record = AverageMeter()  # KD loss recorder
-
-        # turn on the training mode of the model
-        model.train()
-
-        # update LR scheduler for the current epoch
-        exp_lr_scheduler.step()
-        # update ramp-up coefficient for the current epoch
-        w = args.rampup_coefficient * ramps.sigmoid_rampup(epoch, args.rampup_length)
-
-        # START learning batch-by-batch
-        for batch_idx, ((x, x_bar), label, idx) in enumerate(tqdm(train_loader)):
-            # send the vars to GPU
-            x, x_bar, label = x.to(device), x_bar.to(device), label.to(device)
-            # create a mask for labeled data
-            mask_lb = label < args.num_labeled_classes
-
-            # filter out the labeled entries for x, x_bar, label
-            x = x[~mask_lb]
-            x_bar = x_bar[~mask_lb]
-            label = label[~mask_lb]
-
-            # normalize the prototypes
-            if args.l2_classifier:
-                model.l2_classifier = True
-                with torch.no_grad():
-                    w_head = model.head1.weight.data.clone()
-                    w_head = F.normalize(w_head, dim=1, p=2)
-                    model.head1.weight.copy_(w_head)
-            else:
-                model.l2_classifier = False
-
-            # LOOK: now, x only contains unlabeled data
-            output1, output2, feat = model(x)  # outputs of x from head-1 and head-2 and extracted feat
-            # for unlabeled data
-            output1_bar, output2_bar, feat_bar = model(x_bar)  # outputs of x_bar from head-1 and head-2 and extracted feat
-            # for unlabeled data
-
-            # use softmax to get the probability distribution for each head
-            prob1, prob1_bar = F.softmax(output1, dim=1), F.softmax(output1_bar, dim=1)
-            prob2, prob2_bar = F.softmax(output2, dim=1), F.softmax(output2_bar, dim=1)
-
-            # calculate rank statistics
-            # first cut the gradient propagation of the feat
-            rank_feat = (feat).detach()
-
-            rank_idx = torch.argsort(rank_feat, dim=1, descending=True)
-            rank_idx1, rank_idx2 = PairEnum(rank_idx)
-            rank_idx1, rank_idx2 = rank_idx1[:, :args.topk], rank_idx2[:, :args.topk]
-
-            rank_idx1, _ = torch.sort(rank_idx1, dim=1)
-            rank_idx2, _ = torch.sort(rank_idx2, dim=1)
-
-            rank_diff = rank_idx1 - rank_idx2
-            rank_diff = torch.sum(torch.abs(rank_diff), dim=1)
-            target_ulb = torch.ones_like(rank_diff).float().to(device)
-            target_ulb[rank_diff > 0] = -1
-
-            # get the probability distribution of the prediction for head-2
-            prob1_ulb, _ = PairEnum(prob2)
-            _, prob2_ulb = PairEnum(prob2_bar)
-
-            # get the pseudo label from head-2
-            # label = (output2).detach().max(1)[1] + args.num_labeled_classes
-
-            # LOOK: CE_add(head-1 only) loss, BCE(head-2 only) loss, MSE consistency(head-2 only) loss calculation
-            # loss_ce_add = w * criterion1(output1, label) / args.rampup_coefficient * args.increment_coefficient
-
-            loss_bce = criterion2(prob1_ulb, prob2_ulb, target_ulb)
-            consistency_loss = F.mse_loss(prob2, prob2_bar)  # + F.mse_loss(prob1, prob1_bar)
-
-            # record the losses
-            # loss_ce_add_record.update(loss_ce_add.item(), output1.size(0))
-            loss_bce_record.update(loss_bce.item(), prob1_ulb.size(0))
-            consistency_loss_record.update(consistency_loss.item(), prob2.size(0))
-
-            # LOOK: Incremental loss calculation
-            if args.labeled_center > 0:
-                labeled_feats, labeled_labels = sample_labeled_features(class_mean, class_sig, args)  # Prototype
-                labeled_output1 = model.forward_feat(labeled_feats)
-                # EXPT: 只用后五维
-                loss_ce_la = args.lambda_proto * criterion1(labeled_output1[:, :args.num_labeled_classes], labeled_labels)
-            else:
-                loss_ce_la = 0
-
-            # LOOK: KD loss calculation
-            if args.w_kd > 0:
-                _, _, old_feat = old_model(x)
-                size_1, size_2 = old_feat.size()
-                loss_kd = torch.dist(F.normalize(old_feat.view(size_1 * size_2, 1), dim=0),
-                                     F.normalize(feat.view(size_1 * size_2, 1), dim=0)) * args.w_kd
-                # print (loss_kd)
-            else:
-                loss_kd = torch.tensor(0.0)
-
-            # record losses
-            loss_kd_record.update(loss_kd.item(), x.size(0))
-
-            # LOOK:
-            loss = loss_bce + w * consistency_loss + loss_kd + loss_ce_la
-
-            if args.labeled_center > 0 and isinstance(loss_ce_la, torch.Tensor):
-                loss_record.update(loss_ce_la.item(), x.size(0))
-
-            # zero gradients
-            optimizer.zero_grad()
-            # calculate gradients w.r.t. parameters of Backbone + head-2 (head-1 is frozen)
-            loss.backward()
-            # update the parameters
-            optimizer.step()
-
-            # END of current batch
-
-        # complete the current epoch and record training statistics
-        # wandb loss logging
-        wandb.log({"loss/bce": loss_bce_record.avg,
-                   "loss/consistency": consistency_loss_record.avg,
-                   "loss/proto_lab": loss_record.avg,
-                   "loss/kd": loss_kd_record.avg
-                   }, step=epoch)
-
-        print('Train Epoch: {} Avg Loss: {:.4f}'.format(epoch, loss_record.avg))
-
-        # validation for unlabeled data with Backbone(on-the-fly) + head-2(on-the-fly)
-        print('Head2: test on unlabeled classes')
-        args.head = 'head2'
-        acc_head2_ul, ind = test(model, unlabeled_eval_loader, args, return_ind=True)
-
-        # validation for labeled data with Backbone(on-the-fly) + head-1(frozen)
-        print('Head1: test on labeled classes')
-        args.head = 'head1'
-        acc_head1_lb = test(model, labeled_eval_loader, args, cluster=False)
-
-        # validation for unlabeled data with Backbone(on-the-fly) + head-1(frozen)
-        print('Synthesized Head1: test on unlabeled classes')
-        acc_head1_ul = test(model, unlabeled_eval_loader, args, cluster=False, ind=ind)
-
-        print('Synthesized Head1: test on all classes w/o clustering')
-        acc_head1_all_wo_cluster = test(model, all_eval_loader, args, cluster=False, ind=ind)
-
-        print('Synthesized Head1: test on all classes w/ clustering')
-        acc_head1_all_w_cluster = test(model, all_eval_loader, args, cluster=True)
-        # wandb metrics logging
-        wandb.log({
-            "val_acc/head2_ul": acc_head2_ul,
-            "val_acc/Syn_head1_lb": acc_head1_lb,
-            "val_acc/Syn_head1_ul": acc_head1_ul,
-            "val_acc/Syn_head1_all_wo_clutering": acc_head1_all_wo_cluster,
-            "val_acc/Syn_head1_all_w_clustering": acc_head1_all_w_cluster
-        }, step=epoch)
-
-        wandb.log({
-            "misc/w_ramp": w
-        }, step=epoch)
-
-        # END of the current epoch
-
-def train_JointHead1_woPseudo(model, old_model, train_loader, labeled_eval_loader, unlabeled_eval_loader, all_eval_loader,
-                             class_mean, class_sig, class_cov, args):
-    print("=" * 100)
-    print("\t\t\t\tCiao bella! I am Joint Head1 w/o Pseudo Label. I don't have Head2!")
-    print("=" * 100)
-
-    optimizer = SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)  # SGD optimizer
-    exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)  # LR scheduler
-    criterion1 = nn.CrossEntropyLoss()  # CE loss for labeled data
-    criterion2 = BCE()  # BCE loss for unlabeled data
-
-    # START training epoch-by-epoch
-    for epoch in range(args.epochs):
-        # create loss statistics recorder for each loss
-        loss_record = AverageMeter()  # Total loss recorder
-        # loss_ce_add_record = AverageMeter()  # CE loss recorder
-        loss_bce_record = AverageMeter()  # BCE loss recorder
-        consistency_loss_record = AverageMeter()  # MSE consistency loss recorder
-        loss_kd_record = AverageMeter()  # KD loss recorder
-
-        # turn on the training mode of the model
-        model.train()
-
-        # update LR scheduler for the current epoch
-        exp_lr_scheduler.step()
-        # update ramp-up coefficient for the current epoch
-        w = args.rampup_coefficient * ramps.sigmoid_rampup(epoch, args.rampup_length)
-
-        # START learning batch-by-batch
-        for batch_idx, ((x, x_bar), label, idx) in enumerate(tqdm(train_loader)):
-            # send the vars to GPU
-            x, x_bar, label = x.to(device), x_bar.to(device), label.to(device)
-            # create a mask for labeled data
-            mask_lb = label < args.num_labeled_classes
-
-            # filter out the labeled entries for x, x_bar, label
-            x = x[~mask_lb]
-            x_bar = x_bar[~mask_lb]
-            label = label[~mask_lb]
-
-            # normalize the prototypes
-            if args.l2_classifier:
-                model.l2_classifier = True
-                with torch.no_grad():
-                    w_head = model.head1.weight.data.clone()
-                    w_head = F.normalize(w_head, dim=1, p=2)
-                    model.head1.weight.copy_(w_head)
-            else:
-                model.l2_classifier = False
-
-            # LOOK: now, x only contains unlabeled data
-            output1, _, feat = model(x)  # outputs of x from head-1 and head-2 and extracted feat
-            output2 = output1[:, -args.num_unlabeled_classes:]               # EXPT
-            # for unlabeled data
-            output1_bar, _, feat_bar = model(x_bar)  # outputs of x_bar from head-1 and head-2 and extracted feat
-            output2_bar = output1_bar[:, -args.num_unlabeled_classes:]       # EXPT
-
-            # use softmax to get the probability distribution for each head
-            prob1, prob1_bar = F.softmax(output1, dim=1), F.softmax(output1_bar, dim=1)
-            prob2, prob2_bar = F.softmax(output2, dim=1), F.softmax(output2_bar, dim=1)
-
-            # calculate rank statistics
-            # first cut the gradient propagation of the feat
-            rank_feat = (feat).detach()
-
-            rank_idx = torch.argsort(rank_feat, dim=1, descending=True)
-            rank_idx1, rank_idx2 = PairEnum(rank_idx)
-            rank_idx1, rank_idx2 = rank_idx1[:, :args.topk], rank_idx2[:, :args.topk]
-
-            rank_idx1, _ = torch.sort(rank_idx1, dim=1)
-            rank_idx2, _ = torch.sort(rank_idx2, dim=1)
-
-            rank_diff = rank_idx1 - rank_idx2
-            rank_diff = torch.sum(torch.abs(rank_diff), dim=1)
-            target_ulb = torch.ones_like(rank_diff).float().to(device)
-            target_ulb[rank_diff > 0] = -1
-
-            # get the probability distribution of the prediction for head-2
-            prob1_ulb, _ = PairEnum(prob2)
-            _, prob2_ulb = PairEnum(prob2_bar)
-
-            # get the pseudo label from head-2
-            # label = (output2).detach().max(1)[1] + args.num_labeled_classes
-
-            # LOOK: CE_add(head-1 only) loss, BCE(head-2 only) loss, MSE consistency(head-2 only) loss calculation
-            # loss_ce_add = w * criterion1(output1, label) / args.rampup_coefficient * args.increment_coefficient
-            loss_bce = criterion2(prob1_ulb, prob2_ulb, target_ulb)
-            consistency_loss = F.mse_loss(prob2, prob2_bar)  # + F.mse_loss(prob1, prob1_bar)
-
-            # record the losses
-            # loss_ce_add_record.update(loss_ce_add.item(), output1.size(0))
-            loss_bce_record.update(loss_bce.item(), prob1_ulb.size(0))
-            consistency_loss_record.update(consistency_loss.item(), prob2.size(0))
-
-            # LOOK: Incremental loss calculation
-            if args.labeled_center > 0:
-                labeled_feats, labeled_labels = sample_labeled_features(class_mean, class_sig, args)  # Prototype
-                labeled_output1 = model.forward_feat(labeled_feats)
-                loss_ce_la = args.lambda_proto * criterion1(labeled_output1[:, :args.num_labeled_classes], labeled_labels)
-            else:
-                loss_ce_la = 0
-
-            # LOOK: KD loss calculation
-            if args.w_kd > 0:
-                _, _, old_feat = old_model(x)
-                size_1, size_2 = old_feat.size()
-                loss_kd = torch.dist(F.normalize(old_feat.view(size_1 * size_2, 1), dim=0),
-                                     F.normalize(feat.view(size_1 * size_2, 1), dim=0)) * args.w_kd
-                # print (loss_kd)
-            else:
-                loss_kd = torch.tensor(0.0)
-
-            # record losses
-            loss_kd_record.update(loss_kd.item(), x.size(0))
-
-            # LOOK: Total loss = CE_add loss + BCE loss + weighted-MSE-Consistency loss + CE_la loss + KD loss
-            loss = loss_bce + w * consistency_loss + loss_ce_la + loss_kd #+ loss_ce_add
-
-            if args.labeled_center > 0 and isinstance(loss_ce_la, torch.Tensor):
-                loss_record.update(loss_ce_la.item(), x.size(0))
-
-            # zero gradients
-            optimizer.zero_grad()
-            # calculate gradients w.r.t. parameters of Backbone + head-2 (head-1 is frozen)
-            loss.backward()
-            # update the parameters
-            optimizer.step()
-
-            # END of current batch
-
-        # complete the current epoch and record training statistics
-        # wandb loss logging
-        wandb.log({#"loss/pseudo-unlab": loss_ce_add_record.avg,
-                   "loss/bce": loss_bce_record.avg,
-                   "loss/consistency": consistency_loss_record.avg,
-                   "loss/proto_lab": loss_record.avg,
-                   "loss/kd": loss_kd_record.avg
-                   }, step=epoch)
-
-        print('Train Epoch: {} Avg Loss: {:.4f}'.format(epoch, loss_record.avg))
-
-        # validation for unlabeled data with Backbone(on-the-fly) + head-2(on-the-fly)
-        print('Fake Head2: test on unlabeled classes')
-        args.head = 'head2'
-        acc_head2_ul, ind = test(model, unlabeled_eval_loader, args, return_ind=True)
-
-        # validation for labeled data with Backbone(on-the-fly) + head-1(frozen)
-        print('Head1: test on labeled classes')
-        args.head = 'head1'
-        acc_head1_lb = test(model, labeled_eval_loader, args, cluster=False)
-
-        # validation for unlabeled data with Backbone(on-the-fly) + head-1(frozen)
-        print('Head1: test on unlabeled classes')
-        acc_head1_ul = test(model, unlabeled_eval_loader, args, cluster=False, ind=ind)
-
-        # validation for all
-        print('Head1: test on all classes w/o clustering')
-        acc_head1_all_wo_cluster = test(model, all_eval_loader, args, cluster=False, ind=ind)
-
-        print('Head1: test on all classes w/ clustering')
-        acc_head1_all_w_cluster = test(model, all_eval_loader, args, cluster=True)
-        # wandb metrics logging
-        wandb.log({
-            "val_acc/fake_head2_ul_head1_last": acc_head2_ul,
-            "val_acc/head1_lb": acc_head1_lb,
-            "val_acc/head1_ul": acc_head1_ul,
-            "val_acc/head1_all_wo_clutering": acc_head1_all_wo_cluster,
-            "val_acc/head1_all_w_clustering": acc_head1_all_w_cluster
-        }, step=epoch)
-
-        wandb.log({
-            "misc/w_ramp": w
-        }, step=epoch)
-
-        # END of the current epoch
-
-
-
-def train_JointHead1(model, old_model, train_loader, labeled_eval_loader, unlabeled_eval_loader, all_eval_loader,
-                     class_mean, class_sig, class_cov, args):
-    print("=" * 100)
-    print("\t\t\t\tCiao bella! I am Joint Head1. I don't have Head2!")
-    print("=" * 100)
-
-    optimizer = SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)  # SGD optimizer
-    exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)  # LR scheduler
-    criterion1 = nn.CrossEntropyLoss()  # CE loss for labeled data
-    criterion2 = BCE()  # BCE loss for unlabeled data
-
-    # START training epoch-by-epoch
-    for epoch in range(args.epochs):
-        # create loss statistics recorder for each loss
-        loss_record = AverageMeter()  # Total loss recorder
-        loss_ce_add_record = AverageMeter()  # CE loss recorder
-        loss_bce_record = AverageMeter()  # BCE loss recorder
-        consistency_loss_record = AverageMeter()  # MSE consistency loss recorder
-        loss_kd_record = AverageMeter()  # KD loss recorder
-
-        # turn on the training mode of the model
-        model.train()
-
-        # update LR scheduler for the current epoch
-        exp_lr_scheduler.step()
-        # update ramp-up coefficient for the current epoch
-        w = args.rampup_coefficient * ramps.sigmoid_rampup(epoch, args.rampup_length)
-
-        # START learning batch-by-batch
-        for batch_idx, ((x, x_bar), label, idx) in enumerate(tqdm(train_loader)):
-            # send the vars to GPU
-            x, x_bar, label = x.to(device), x_bar.to(device), label.to(device)
-            # create a mask for labeled data
-            mask_lb = label < args.num_labeled_classes
-
-            # filter out the labeled entries for x, x_bar, label
-            x = x[~mask_lb]
-            x_bar = x_bar[~mask_lb]
-            label = label[~mask_lb]
-
-            # normalize the prototypes
-            if args.l2_classifier:
-                model.l2_classifier = True
-                with torch.no_grad():
-                    w_head = model.head1.weight.data.clone()
-                    w_head = F.normalize(w_head, dim=1, p=2)
-                    model.head1.weight.copy_(w_head)
-            else:
-                model.l2_classifier = False
-
-            # LOOK: now, x only contains unlabeled data
-            output1, _, feat = model(x)  # outputs of x from head-1 and head-2 and extracted feat
-            output2 = output1[:, -args.num_unlabeled_classes:]               # EXPT
-            # for unlabeled data
-            output1_bar, _, feat_bar = model(x_bar)  # outputs of x_bar from head-1 and head-2 and extracted feat
-            output2_bar = output1_bar[:, -args.num_unlabeled_classes:]       # EXPT
-
-            # use softmax to get the probability distribution for each head
-            prob1, prob1_bar = F.softmax(output1, dim=1), F.softmax(output1_bar, dim=1)
-            prob2, prob2_bar = F.softmax(output2, dim=1), F.softmax(output2_bar, dim=1)
-
-            # calculate rank statistics
-            # first cut the gradient propagation of the feat
-            rank_feat = (feat).detach()
-
-            rank_idx = torch.argsort(rank_feat, dim=1, descending=True)
-            rank_idx1, rank_idx2 = PairEnum(rank_idx)
-            rank_idx1, rank_idx2 = rank_idx1[:, :args.topk], rank_idx2[:, :args.topk]
-
-            rank_idx1, _ = torch.sort(rank_idx1, dim=1)
-            rank_idx2, _ = torch.sort(rank_idx2, dim=1)
-
-            rank_diff = rank_idx1 - rank_idx2
-            rank_diff = torch.sum(torch.abs(rank_diff), dim=1)
-            target_ulb = torch.ones_like(rank_diff).float().to(device)
-            target_ulb[rank_diff > 0] = -1
-
-            # get the probability distribution of the prediction for head-2
-            prob1_ulb, _ = PairEnum(prob2)
-            _, prob2_ulb = PairEnum(prob2_bar)
-
-            # get the pseudo label from head-2
-            label = (output2).detach().max(1)[1] + args.num_labeled_classes
-
-            # LOOK: CE_add(head-1 only) loss, BCE(head-2 only) loss, MSE consistency(head-2 only) loss calculation
-            loss_ce_add = w * criterion1(output1, label) / args.rampup_coefficient * args.increment_coefficient
-            loss_bce = criterion2(prob1_ulb, prob2_ulb, target_ulb)
-            consistency_loss = F.mse_loss(prob2, prob2_bar)  # + F.mse_loss(prob1, prob1_bar)
-
-            # record the losses
-            loss_ce_add_record.update(loss_ce_add.item(), output1.size(0))
-            loss_bce_record.update(loss_bce.item(), prob1_ulb.size(0))
-            consistency_loss_record.update(consistency_loss.item(), prob2.size(0))
-
-            # LOOK: Incremental loss calculation
-            if args.labeled_center > 0:
-                labeled_feats, labeled_labels = sample_labeled_features(class_mean, class_sig, args)  # Prototype
-                labeled_output1 = model.forward_feat(labeled_feats)
-
-                loss_ce_la = args.lambda_proto * criterion1(labeled_output1, labeled_labels)
-            else:
-                loss_ce_la = 0
-
-            # LOOK: KD loss calculation
-            if args.w_kd > 0:
-                _, _, old_feat = old_model(x)
-                size_1, size_2 = old_feat.size()
-                loss_kd = torch.dist(F.normalize(old_feat.view(size_1 * size_2, 1), dim=0),
-                                     F.normalize(feat.view(size_1 * size_2, 1), dim=0)) * args.w_kd
-                # print (loss_kd)
-            else:
-                loss_kd = torch.tensor(0.0)
-
-            # record losses
-            loss_kd_record.update(loss_kd.item(), x.size(0))
-
-            # LOOK: Total loss = CE_add loss + BCE loss + weighted-MSE-Consistency loss + CE_la loss + KD loss
-            loss = loss_bce + loss_ce_add + w * consistency_loss + loss_ce_la + loss_kd
-
-            if args.labeled_center > 0 and isinstance(loss_ce_la, torch.Tensor):
-                loss_record.update(loss_ce_la.item(), x.size(0))
-
-            # zero gradients
-            optimizer.zero_grad()
-            # calculate gradients w.r.t. parameters of Backbone + head-2 (head-1 is frozen)
-            loss.backward()
-            # update the parameters
-            optimizer.step()
-
-            # END of current batch
-
-        # complete the current epoch and record training statistics
-        # wandb loss logging
-        wandb.log({"loss/pseudo-unlab": loss_ce_add_record.avg,
-                   "loss/bce": loss_bce_record.avg,
-                   "loss/consistency": consistency_loss_record.avg,
-                   "loss/proto_lab": loss_record.avg,
-                   "loss/kd": loss_kd_record.avg
-                   }, step=epoch)
-
-        print('Train Epoch: {} Avg Loss: {:.4f}'.format(epoch, loss_record.avg))
-
-        # validation for unlabeled data with Backbone(on-the-fly) + head-2(on-the-fly)
-        print('Fake Head2: test on unlabeled classes')
-        args.head = 'head2'
-        acc_head2_ul, ind = test(model, unlabeled_eval_loader, args, return_ind=True)
-
-        # validation for labeled data with Backbone(on-the-fly) + head-1(frozen)
-        print('Head1: test on labeled classes')
-        args.head = 'head1'
-        acc_head1_lb = test(model, labeled_eval_loader, args, cluster=False)
-
-        # validation for unlabeled data with Backbone(on-the-fly) + head-1(frozen)
-        print('Head1: test on unlabeled classes')
-        acc_head1_ul = test(model, unlabeled_eval_loader, args, cluster=False, ind=ind)
-
-        # validation for all
-        print('Head1: test on all classes w/o clustering')
-        acc_head1_all_wo_cluster = test(model, all_eval_loader, args, cluster=False, ind=ind)
-
-        print('Head1: test on all classes w/ clustering')
-        acc_head1_all_w_cluster = test(model, all_eval_loader, args, cluster=True)
-        # wandb metrics logging
-        wandb.log({
-            "val_acc/fake_head2_ul_head1_last": acc_head2_ul,
-            "val_acc/head1_lb": acc_head1_lb,
-            "val_acc/head1_ul": acc_head1_ul,
-            "val_acc/head1_all_wo_clutering": acc_head1_all_wo_cluster,
-            "val_acc/head1_all_w_clustering": acc_head1_all_w_cluster
-        }, step=epoch)
-
-        wandb.log({
-            "misc/w_ramp": w
-        }, step=epoch)
-
-        # END of the current epoch
-
-
-
-def train_LwF(model, old_model, train_loader, labeled_eval_loader, unlabeled_eval_loader, all_eval_loader, args):
-    print("="*100)
-    print("\t\t\t\tCiao bella! I am LwF! I don't have Feat-KD and Feat-Proto!")
-    print("="*100)
-
     optimizer = SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
     exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)
-    criterion1 = nn.CrossEntropyLoss()
-    criterion2 = BCE()
+    criterion1 = nn.CrossEntropyLoss()  # CE loss for labeled data
+    criterion2 = BCE()                  # BCE loss for unlabeled data
 
-    # START training epoch-by-epoch
     for epoch in range(args.epochs):
         # create loss statistics recorder for each loss
-        loss_ce_add_record = AverageMeter()  # CE loss recorder
-        loss_bce_record = AverageMeter()  # BCE loss recorder
-        consistency_loss_record = AverageMeter()  # MSE consistency loss recorder
-        loss_kd_record = AverageMeter()  # KD loss recorder
+        loss_record = AverageMeter()                # Total loss recorder
+        # loss_ce_add_record = AverageMeter()       # CE loss recorder
+        loss_bce_record = AverageMeter()            # BCE loss recorder
+        consistency_loss_record = AverageMeter()    # MSE consistency loss recorder
+        loss_kd_record = AverageMeter()             # KD loss recorder
 
         # turn on the training mode of the model
         model.train()
@@ -1073,7 +493,6 @@ def train_LwF(model, old_model, train_loader, labeled_eval_loader, unlabeled_eva
         # update ramp-up coefficient for the current epoch
         w = args.rampup_coefficient * ramps.sigmoid_rampup(epoch, args.rampup_length)
 
-        # START learning batch-by-batch
         for batch_idx, ((x, x_bar), label, idx) in enumerate(tqdm(train_loader)):
             # send the vars to GPU
             x, x_bar, label = x.to(device), x_bar.to(device), label.to(device)
@@ -1103,7 +522,318 @@ def train_LwF(model, old_model, train_loader, labeled_eval_loader, unlabeled_eva
             prob2, prob2_bar = F.softmax(output2, dim=1), F.softmax(output2_bar, dim=1)
 
             # calculate rank statistics
-            # first cut the gradient propagation of the feat
+            rank_feat = (feat).detach()
+
+            rank_idx = torch.argsort(rank_feat, dim=1, descending=True)
+            rank_idx1, rank_idx2 = PairEnum(rank_idx)
+            rank_idx1, rank_idx2 = rank_idx1[:, :args.topk], rank_idx2[:, :args.topk]
+
+            rank_idx1, _ = torch.sort(rank_idx1, dim=1)
+            rank_idx2, _ = torch.sort(rank_idx2, dim=1)
+
+            rank_diff = rank_idx1 - rank_idx2
+            rank_diff = torch.sum(torch.abs(rank_diff), dim=1)
+            target_ulb = torch.ones_like(rank_diff).float().to(device)
+            target_ulb[rank_diff > 0] = -1
+
+            # get the probability distribution of the prediction for head-2
+            prob1_ulb, _ = PairEnum(prob2)
+            _, prob2_ulb = PairEnum(prob2_bar)
+
+            loss_bce = criterion2(prob1_ulb, prob2_ulb, target_ulb)
+            consistency_loss = F.mse_loss(prob2, prob2_bar)  # + F.mse_loss(prob1, prob1_bar)
+
+            # record the losses
+            loss_bce_record.update(loss_bce.item(), prob1_ulb.size(0))
+            consistency_loss_record.update(consistency_loss.item(), prob2.size(0))
+
+            if args.labeled_center > 0:
+                labeled_feats, labeled_labels = sample_labeled_features(class_mean, class_sig, args)
+                labeled_output1 = model.forward_feat(labeled_feats)
+                loss_ce_la = args.lambda_proto * criterion1(labeled_output1[:, :args.num_labeled_classes], labeled_labels)
+            else:
+                loss_ce_la = 0
+
+            if args.w_kd > 0:
+                _, _, old_feat = old_model(x)
+                size_1, size_2 = old_feat.size()
+                loss_kd = torch.dist(F.normalize(old_feat.view(size_1 * size_2, 1), dim=0),
+                                     F.normalize(feat.view(size_1 * size_2, 1), dim=0)) * args.w_kd
+            else:
+                loss_kd = torch.tensor(0.0)
+
+            # record losses
+            loss_kd_record.update(loss_kd.item(), x.size(0))
+
+            loss = loss_bce + w * consistency_loss + loss_kd + loss_ce_la
+
+            if args.labeled_center > 0 and isinstance(loss_ce_la, torch.Tensor):
+                loss_record.update(loss_ce_la.item(), x.size(0))
+
+            # zero gradients
+            optimizer.zero_grad()
+            # calculate gradients w.r.t. parameters of Backbone + head-2 (head-1 is frozen)
+            loss.backward()
+            # update the parameters
+            optimizer.step()
+
+        # wandb loss logging
+        wandb.log({"loss/bce": loss_bce_record.avg,
+                   "loss/consistency": consistency_loss_record.avg,
+                   "loss/proto_lab": loss_record.avg,
+                   "loss/kd": loss_kd_record.avg
+                   }, step=epoch)
+
+        print('Train Epoch: {} Avg Loss: {:.4f}'.format(epoch, loss_record.avg))
+
+        print('Head2: test on unlabeled classes')
+        args.head = 'head2'
+        acc_head2_ul, ind = test(model, unlabeled_eval_loader, args, return_ind=True)
+
+        print('Head1: test on labeled classes')
+        args.head = 'head1'
+        acc_head1_lb = test(model, labeled_eval_loader, args, cluster=False)
+
+        print('Synthesized Head1: test on unlabeled classes')
+        acc_head1_ul = test(model, unlabeled_eval_loader, args, cluster=False, ind=ind)
+
+        print('Synthesized Head1: test on all classes w/o clustering')
+        acc_head1_all_wo_cluster = test(model, all_eval_loader, args, cluster=False, ind=ind)
+
+        print('Synthesized Head1: test on all classes w/ clustering')
+        acc_head1_all_w_cluster = test(model, all_eval_loader, args, cluster=True)
+
+        # wandb metrics logging
+        wandb.log({
+            "val_acc/head2_ul": acc_head2_ul,
+            "val_acc/Syn_head1_lb": acc_head1_lb,
+            "val_acc/Syn_head1_ul": acc_head1_ul,
+            "val_acc/Syn_head1_all_wo_clutering": acc_head1_all_wo_cluster,
+            "val_acc/Syn_head1_all_w_clustering": acc_head1_all_w_cluster
+        }, step=epoch)
+
+        wandb.log({
+            "misc/w_ramp": w
+        }, step=epoch)
+
+
+def train_JointHead1_woPseudo(model, old_model, train_loader, labeled_eval_loader, unlabeled_eval_loader, all_eval_loader,
+                             class_mean, class_sig, class_cov, args):
+    print("=" * 100)
+    print("\t\t\t\tCiao bella! I am Joint Head1 w/o Pseudo Label. I don't have Head2!")
+    print("=" * 100)
+
+    optimizer = SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+    exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)
+    criterion1 = nn.CrossEntropyLoss()      # CE loss for labeled data
+    criterion2 = BCE()                      # BCE loss for unlabeled data
+
+    # START training epoch-by-epoch
+    for epoch in range(args.epochs):
+        # create loss statistics recorder for each loss
+        loss_record = AverageMeter()                # Total loss recorder
+        # loss_ce_add_record = AverageMeter()       # CE loss recorder
+        loss_bce_record = AverageMeter()            # BCE loss recorder
+        consistency_loss_record = AverageMeter()    # MSE consistency loss recorder
+        loss_kd_record = AverageMeter()             # KD loss recorder
+
+        # turn on the training mode of the model
+        model.train()
+
+        # update LR scheduler for the current epoch
+        exp_lr_scheduler.step()
+        # update ramp-up coefficient for the current epoch
+        w = args.rampup_coefficient * ramps.sigmoid_rampup(epoch, args.rampup_length)
+
+        for batch_idx, ((x, x_bar), label, idx) in enumerate(tqdm(train_loader)):
+            # send the vars to GPU
+            x, x_bar, label = x.to(device), x_bar.to(device), label.to(device)
+            # create a mask for labeled data
+            mask_lb = label < args.num_labeled_classes
+
+            # filter out the labeled entries for x, x_bar, label
+            x = x[~mask_lb]
+            x_bar = x_bar[~mask_lb]
+            label = label[~mask_lb]
+
+            # normalize the prototypes
+            if args.l2_classifier:
+                model.l2_classifier = True
+                with torch.no_grad():
+                    w_head = model.head1.weight.data.clone()
+                    w_head = F.normalize(w_head, dim=1, p=2)
+                    model.head1.weight.copy_(w_head)
+            else:
+                model.l2_classifier = False
+
+            output1, _, feat = model(x)                 # outputs of x from head-1 and head-2 and extracted feat
+            output2 = output1[:, -args.num_unlabeled_classes:]
+            output1_bar, _, feat_bar = model(x_bar)     # outputs of x_bar from head-1 and head-2 and extracted feat
+            output2_bar = output1_bar[:, -args.num_unlabeled_classes:]
+
+            # use softmax to get the probability distribution for each head
+            prob1, prob1_bar = F.softmax(output1, dim=1), F.softmax(output1_bar, dim=1)
+            prob2, prob2_bar = F.softmax(output2, dim=1), F.softmax(output2_bar, dim=1)
+
+            # calculate rank statistics
+            rank_feat = (feat).detach()
+
+            rank_idx = torch.argsort(rank_feat, dim=1, descending=True)
+            rank_idx1, rank_idx2 = PairEnum(rank_idx)
+            rank_idx1, rank_idx2 = rank_idx1[:, :args.topk], rank_idx2[:, :args.topk]
+
+            rank_idx1, _ = torch.sort(rank_idx1, dim=1)
+            rank_idx2, _ = torch.sort(rank_idx2, dim=1)
+
+            rank_diff = rank_idx1 - rank_idx2
+            rank_diff = torch.sum(torch.abs(rank_diff), dim=1)
+            target_ulb = torch.ones_like(rank_diff).float().to(device)
+            target_ulb[rank_diff > 0] = -1
+
+            # get the probability distribution of the prediction for head-2
+            prob1_ulb, _ = PairEnum(prob2)
+            _, prob2_ulb = PairEnum(prob2_bar)
+
+
+            loss_bce = criterion2(prob1_ulb, prob2_ulb, target_ulb)
+            consistency_loss = F.mse_loss(prob2, prob2_bar)  # + F.mse_loss(prob1, prob1_bar)
+
+            # record the losses
+            loss_bce_record.update(loss_bce.item(), prob1_ulb.size(0))
+            consistency_loss_record.update(consistency_loss.item(), prob2.size(0))
+
+            if args.labeled_center > 0:
+                labeled_feats, labeled_labels = sample_labeled_features(class_mean, class_sig, args)
+                labeled_output1 = model.forward_feat(labeled_feats)
+                loss_ce_la = args.lambda_proto * criterion1(labeled_output1[:, :args.num_labeled_classes], labeled_labels)
+            else:
+                loss_ce_la = 0
+
+            if args.w_kd > 0:
+                _, _, old_feat = old_model(x)
+                size_1, size_2 = old_feat.size()
+                loss_kd = torch.dist(F.normalize(old_feat.view(size_1 * size_2, 1), dim=0),
+                                     F.normalize(feat.view(size_1 * size_2, 1), dim=0)) * args.w_kd
+            else:
+                loss_kd = torch.tensor(0.0)
+
+            # record losses
+            loss_kd_record.update(loss_kd.item(), x.size(0))
+
+            loss = loss_bce + w * consistency_loss + loss_ce_la + loss_kd #+ loss_ce_add
+
+            if args.labeled_center > 0 and isinstance(loss_ce_la, torch.Tensor):
+                loss_record.update(loss_ce_la.item(), x.size(0))
+
+            # zero gradients
+            optimizer.zero_grad()
+            # calculate gradients w.r.t. parameters of Backbone + head-2 (head-1 is frozen)
+            loss.backward()
+            # update the parameters
+            optimizer.step()
+
+        # wandb loss logging
+        wandb.log({#"loss/pseudo-unlab": loss_ce_add_record.avg,
+                   "loss/bce": loss_bce_record.avg,
+                   "loss/consistency": consistency_loss_record.avg,
+                   "loss/proto_lab": loss_record.avg,
+                   "loss/kd": loss_kd_record.avg
+                   }, step=epoch)
+
+        print('Train Epoch: {} Avg Loss: {:.4f}'.format(epoch, loss_record.avg))
+
+        print('Fake Head2: test on unlabeled classes')
+        args.head = 'head2'
+        acc_head2_ul, ind = test(model, unlabeled_eval_loader, args, return_ind=True)
+
+        print('Head1: test on labeled classes')
+        args.head = 'head1'
+        acc_head1_lb = test(model, labeled_eval_loader, args, cluster=False)
+
+        print('Head1: test on unlabeled classes')
+        acc_head1_ul = test(model, unlabeled_eval_loader, args, cluster=False, ind=ind)
+
+        print('Head1: test on all classes w/o clustering')
+        acc_head1_all_wo_cluster = test(model, all_eval_loader, args, cluster=False, ind=ind)
+
+        print('Head1: test on all classes w/ clustering')
+        acc_head1_all_w_cluster = test(model, all_eval_loader, args, cluster=True)
+
+        # wandb metrics logging
+        wandb.log({
+            "val_acc/fake_head2_ul_head1_last": acc_head2_ul,
+            "val_acc/head1_lb": acc_head1_lb,
+            "val_acc/head1_ul": acc_head1_ul,
+            "val_acc/head1_all_wo_clutering": acc_head1_all_wo_cluster,
+            "val_acc/head1_all_w_clustering": acc_head1_all_w_cluster
+        }, step=epoch)
+
+        wandb.log({
+            "misc/w_ramp": w
+        }, step=epoch)
+
+        # END of the current epoch
+
+
+
+def train_JointHead1(model, old_model, train_loader, labeled_eval_loader, unlabeled_eval_loader, all_eval_loader,
+                     class_mean, class_sig, class_cov, args):
+    print("=" * 100)
+    print("\t\t\t\tCiao bella! I am Joint Head1. I don't have Head2!")
+    print("=" * 100)
+
+    optimizer = SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+    exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)
+    criterion1 = nn.CrossEntropyLoss()      # CE loss for labeled data
+    criterion2 = BCE()                      # BCE loss for unlabeled data
+
+    # START training epoch-by-epoch
+    for epoch in range(args.epochs):
+        # create loss statistics recorder for each loss
+        loss_record = AverageMeter()                # Total loss recorder
+        loss_ce_add_record = AverageMeter()         # CE loss recorder
+        loss_bce_record = AverageMeter()            # BCE loss recorder
+        consistency_loss_record = AverageMeter()    # MSE consistency loss recorder
+        loss_kd_record = AverageMeter()             # KD loss recorder
+
+        # turn on the training mode of the model
+        model.train()
+        # update LR scheduler for the current epoch
+        exp_lr_scheduler.step()
+        # update ramp-up coefficient for the current epoch
+        w = args.rampup_coefficient * ramps.sigmoid_rampup(epoch, args.rampup_length)
+
+        for batch_idx, ((x, x_bar), label, idx) in enumerate(tqdm(train_loader)):
+            # send the vars to GPU
+            x, x_bar, label = x.to(device), x_bar.to(device), label.to(device)
+            # create a mask for labeled data
+            mask_lb = label < args.num_labeled_classes
+
+            # filter out the labeled entries for x, x_bar, label
+            x = x[~mask_lb]
+            x_bar = x_bar[~mask_lb]
+            label = label[~mask_lb]
+
+            # normalize the prototypes
+            if args.l2_classifier:
+                model.l2_classifier = True
+                with torch.no_grad():
+                    w_head = model.head1.weight.data.clone()
+                    w_head = F.normalize(w_head, dim=1, p=2)
+                    model.head1.weight.copy_(w_head)
+            else:
+                model.l2_classifier = False
+
+            output1, _, feat = model(x)                             # outputs of x from head-1 and head-2 and extracted feat
+            output2 = output1[:, -args.num_unlabeled_classes:]
+            output1_bar, _, feat_bar = model(x_bar)                 # outputs of x_bar from head-1 and head-2 and extracted feat
+            output2_bar = output1_bar[:, -args.num_unlabeled_classes:]
+
+            # use softmax to get the probability distribution for each head
+            prob1, prob1_bar = F.softmax(output1, dim=1), F.softmax(output1_bar, dim=1)
+            prob2, prob2_bar = F.softmax(output2, dim=1), F.softmax(output2_bar, dim=1)
+
+            # calculate rank statistics
             rank_feat = (feat).detach()
 
             rank_idx = torch.argsort(rank_feat, dim=1, descending=True)
@@ -1125,7 +855,6 @@ def train_LwF(model, old_model, train_loader, labeled_eval_loader, unlabeled_eva
             # get the pseudo label from head-2
             label = (output2).detach().max(1)[1] + args.num_labeled_classes
 
-            # LOOK: CE_add(head-1 only) loss, BCE(head-2 only) loss, MSE consistency(head-2 only) loss calculation
             loss_ce_add = w * criterion1(output1, label) / args.rampup_coefficient * args.increment_coefficient
             loss_bce = criterion2(prob1_ulb, prob2_ulb, target_ulb)
             consistency_loss = F.mse_loss(prob2, prob2_bar)  # + F.mse_loss(prob1, prob1_bar)
@@ -1135,10 +864,160 @@ def train_LwF(model, old_model, train_loader, labeled_eval_loader, unlabeled_eva
             loss_bce_record.update(loss_bce.item(), prob1_ulb.size(0))
             consistency_loss_record.update(consistency_loss.item(), prob2.size(0))
 
-            # LOOK: LwF KD loss calculation
+            if args.labeled_center > 0:
+                labeled_feats, labeled_labels = sample_labeled_features(class_mean, class_sig, args)  # Prototype
+                labeled_output1 = model.forward_feat(labeled_feats)
+
+                loss_ce_la = args.lambda_proto * criterion1(labeled_output1, labeled_labels)
+            else:
+                loss_ce_la = 0
+
             if args.w_kd > 0:
-                # EXPT: LwF logits-KD
-                # OUR Impl.
+                _, _, old_feat = old_model(x)
+                size_1, size_2 = old_feat.size()
+                loss_kd = torch.dist(F.normalize(old_feat.view(size_1 * size_2, 1), dim=0),
+                                     F.normalize(feat.view(size_1 * size_2, 1), dim=0)) * args.w_kd
+            else:
+                loss_kd = torch.tensor(0.0)
+
+            # record losses
+            loss_kd_record.update(loss_kd.item(), x.size(0))
+
+            loss = loss_bce + loss_ce_add + w * consistency_loss + loss_ce_la + loss_kd
+
+            if args.labeled_center > 0 and isinstance(loss_ce_la, torch.Tensor):
+                loss_record.update(loss_ce_la.item(), x.size(0))
+
+            # zero gradients
+            optimizer.zero_grad()
+            # calculate gradients w.r.t. parameters of Backbone + head-2 (head-1 is frozen)
+            loss.backward()
+            # update the parameters
+            optimizer.step()
+
+        # wandb loss logging
+        wandb.log({"loss/pseudo-unlab": loss_ce_add_record.avg,
+                   "loss/bce": loss_bce_record.avg,
+                   "loss/consistency": consistency_loss_record.avg,
+                   "loss/proto_lab": loss_record.avg,
+                   "loss/kd": loss_kd_record.avg
+                   }, step=epoch)
+
+        print('Train Epoch: {} Avg Loss: {:.4f}'.format(epoch, loss_record.avg))
+
+        print('Fake Head2: test on unlabeled classes')
+        args.head = 'head2'
+        acc_head2_ul, ind = test(model, unlabeled_eval_loader, args, return_ind=True)
+
+        print('Head1: test on labeled classes')
+        args.head = 'head1'
+        acc_head1_lb = test(model, labeled_eval_loader, args, cluster=False)
+
+        print('Head1: test on unlabeled classes')
+        acc_head1_ul = test(model, unlabeled_eval_loader, args, cluster=False, ind=ind)
+
+        print('Head1: test on all classes w/o clustering')
+        acc_head1_all_wo_cluster = test(model, all_eval_loader, args, cluster=False, ind=ind)
+
+        print('Head1: test on all classes w/ clustering')
+        acc_head1_all_w_cluster = test(model, all_eval_loader, args, cluster=True)
+
+        # wandb metrics logging
+        wandb.log({
+            "val_acc/fake_head2_ul_head1_last": acc_head2_ul,
+            "val_acc/head1_lb": acc_head1_lb,
+            "val_acc/head1_ul": acc_head1_ul,
+            "val_acc/head1_all_wo_clutering": acc_head1_all_wo_cluster,
+            "val_acc/head1_all_w_clustering": acc_head1_all_w_cluster
+        }, step=epoch)
+
+        wandb.log({
+            "misc/w_ramp": w
+        }, step=epoch)
+
+def train_LwF(model, old_model, train_loader, labeled_eval_loader, unlabeled_eval_loader, all_eval_loader, args):
+    print("="*100)
+    print("\t\t\t\tCiao bella! I am LwF! I don't have Feat-KD and Feat-Proto!")
+    print("="*100)
+
+    optimizer = SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+    exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)
+    criterion1 = nn.CrossEntropyLoss()
+    criterion2 = BCE()
+
+    for epoch in range(args.epochs):
+        # create loss statistics recorder for each loss
+        loss_ce_add_record = AverageMeter()         # CE loss recorder
+        loss_bce_record = AverageMeter()            # BCE loss recorder
+        consistency_loss_record = AverageMeter()    # MSE consistency loss recorder
+        loss_kd_record = AverageMeter()             # KD loss recorder
+
+        # turn on the training mode of the model
+        model.train()
+
+        exp_lr_scheduler.step()
+        w = args.rampup_coefficient * ramps.sigmoid_rampup(epoch, args.rampup_length)
+
+        for batch_idx, ((x, x_bar), label, idx) in enumerate(tqdm(train_loader)):
+            # send the vars to GPU
+            x, x_bar, label = x.to(device), x_bar.to(device), label.to(device)
+            # create a mask for labeled data
+            mask_lb = label < args.num_labeled_classes
+
+            # filter out the labeled entries for x, x_bar, label
+            x = x[~mask_lb]
+            x_bar = x_bar[~mask_lb]
+            label = label[~mask_lb]
+
+            # normalize the prototypes
+            if args.l2_classifier:
+                model.l2_classifier = True
+                with torch.no_grad():
+                    w_head = model.head1.weight.data.clone()
+                    w_head = F.normalize(w_head, dim=1, p=2)
+                    model.head1.weight.copy_(w_head)
+            else:
+                model.l2_classifier = False
+
+            output1, output2, feat = model(x)
+            output1_bar, output2_bar, feat_bar = model(x_bar)
+
+            # use softmax to get the probability distribution for each head
+            prob1, prob1_bar = F.softmax(output1, dim=1), F.softmax(output1_bar, dim=1)
+            prob2, prob2_bar = F.softmax(output2, dim=1), F.softmax(output2_bar, dim=1)
+
+            # calculate rank statistics
+            rank_feat = (feat).detach()
+
+            rank_idx = torch.argsort(rank_feat, dim=1, descending=True)
+            rank_idx1, rank_idx2 = PairEnum(rank_idx)
+            rank_idx1, rank_idx2 = rank_idx1[:, :args.topk], rank_idx2[:, :args.topk]
+
+            rank_idx1, _ = torch.sort(rank_idx1, dim=1)
+            rank_idx2, _ = torch.sort(rank_idx2, dim=1)
+
+            rank_diff = rank_idx1 - rank_idx2
+            rank_diff = torch.sum(torch.abs(rank_diff), dim=1)
+            target_ulb = torch.ones_like(rank_diff).float().to(device)
+            target_ulb[rank_diff > 0] = -1
+
+            # get the probability distribution of the prediction for head-2
+            prob1_ulb, _ = PairEnum(prob2)
+            _, prob2_ulb = PairEnum(prob2_bar)
+
+            # get the pseudo label from head-2
+            label = (output2).detach().max(1)[1] + args.num_labeled_classes
+
+            loss_ce_add = w * criterion1(output1, label) / args.rampup_coefficient * args.increment_coefficient
+            loss_bce = criterion2(prob1_ulb, prob2_ulb, target_ulb)
+            consistency_loss = F.mse_loss(prob2, prob2_bar)  # + F.mse_loss(prob1, prob1_bar)
+
+            # record the losses
+            loss_ce_add_record.update(loss_ce_add.item(), output1.size(0))
+            loss_bce_record.update(loss_bce.item(), prob1_ulb.size(0))
+            consistency_loss_record.update(consistency_loss.item(), prob2.size(0))
+
+            if args.w_kd > 0:
                 old_output1, _, _ = old_model(x)
                 size_1, size_2 = old_output1.size()
                 loss_kd = torch.dist(F.normalize(old_output1.view(size_1 * size_2, 1), dim=0),
@@ -1152,7 +1031,6 @@ def train_LwF(model, old_model, train_loader, labeled_eval_loader, unlabeled_eva
                 # loss_kd = loss_kd.sum(1)
                 # loss_kd = loss_kd.mean() * 2 * 2 * args.w_kd
 
-                # LwF simpler OG Impl
                 old_output1, _, _ = old_model(x)
                 size_1, size_2 = old_output1.size()
                 soft_old_output1 = F.softmax(old_output1 / 2, dim=1)
@@ -1165,7 +1043,6 @@ def train_LwF(model, old_model, train_loader, labeled_eval_loader, unlabeled_eva
             # record losses
             loss_kd_record.update(loss_kd.item(), x.size(0))
 
-            # LOOK: Total loss = CE_add loss + BCE loss + weighted-MSE-Consistency loss + CE_la loss + KD loss
             loss = loss_bce + loss_ce_add + w * consistency_loss + loss_kd
 
             # zero gradients
@@ -1175,9 +1052,6 @@ def train_LwF(model, old_model, train_loader, labeled_eval_loader, unlabeled_eva
             # update the parameters
             optimizer.step()
 
-            # END of current batch
-
-        # complete the current epoch and record training statistics
         # wandb loss logging
         wandb.log({"loss/pseudo-unlab": loss_ce_add_record.avg,
                    "loss/bce": loss_bce_record.avg,
@@ -1185,26 +1059,23 @@ def train_LwF(model, old_model, train_loader, labeled_eval_loader, unlabeled_eva
                    "loss/LwF_logits_kd": loss_kd_record.avg
                    }, step=epoch)
 
-        # validation for unlabeled data with Backbone(on-the-fly) + head-2(on-the-fly)
         print('Head2: test on unlabeled classes')
         args.head = 'head2'
         acc_head2_ul, ind = test(model, unlabeled_eval_loader, args, return_ind=True)
 
-        # validation for labeled data with Backbone(on-the-fly) + head-1(frozen)
         print('Head1: test on labeled classes')
         args.head = 'head1'
         acc_head1_lb = test(model, labeled_eval_loader, args, cluster=False)
 
-        # validation for unlabeled data with Backbone(on-the-fly) + head-1(frozen)
         print('Head1: test on unlabeled classes')
         acc_head1_ul = test(model, unlabeled_eval_loader, args, cluster=False, ind=ind)
 
-        # validation for all
         print('Head1: test on all classes w/o clustering')
         acc_head1_all_wo_cluster = test(model, all_eval_loader, args, cluster=False, ind=ind)
 
         print('Head1: test on all classes w/ clustering')
         acc_head1_all_w_cluster = test(model, all_eval_loader, args, cluster=True)
+
         # wandb metrics logging
         wandb.log({
             "val_acc/head2_ul": acc_head2_ul,
@@ -1218,7 +1089,6 @@ def train_LwF(model, old_model, train_loader, labeled_eval_loader, unlabeled_eva
             "misc/w_ramp": w
         }, step=epoch)
 
-        # END of the current epoch
 
 def train_IL_center(model, old_model, train_loader, labeled_eval_loader, unlabeled_eval_loader, all_eval_loader,
                     class_mean, class_sig, class_cov, args):
@@ -1231,7 +1101,6 @@ def train_IL_center(model, old_model, train_loader, labeled_eval_loader, unlabel
     criterion1 = nn.CrossEntropyLoss()      # CE loss for labeled data
     criterion2 = BCE()                      # BCE loss for unlabeled data
 
-    # START training epoch-by-epoch
     for epoch in range(args.epochs):
         # create loss statistics recorder for each loss
         loss_record = AverageMeter()                    # Total loss recorder
@@ -1247,7 +1116,6 @@ def train_IL_center(model, old_model, train_loader, labeled_eval_loader, unlabel
         # update ramp-up coefficient for the current epoch
         w = args.rampup_coefficient * ramps.sigmoid_rampup(epoch, args.rampup_length)
 
-        # START learning batch-by-batch
         for batch_idx, ((x, x_bar), label, idx) in enumerate(tqdm(train_loader)):
             # send the vars to GPU
             x, x_bar, label = x.to(device), x_bar.to(device), label.to(device)
@@ -1304,11 +1172,8 @@ def train_IL_center(model, old_model, train_loader, labeled_eval_loader, unlabel
             # get the pseudo label from head-2
             label = (output2).detach().max(1)[1] + args.num_labeled_classes
 
-            # LOOK: CE_add(head-1 only) loss, BCE(head-2 only) loss, MSE consistency(head-2 only) loss calculation
             loss_ce_add = w * criterion1(output1, label) / args.rampup_coefficient * args.increment_coefficient
-            # BCE loss for head-2 of x_ulb
             loss_bce = criterion2(prob1_ulb, prob2_ulb, target_ulb)
-            # MSE Consistency loss of x_ulb
             consistency_loss = F.mse_loss(prob2, prob2_bar) # + F.mse_loss(prob1, prob1_bar)
 
             # record the losses
@@ -1316,15 +1181,13 @@ def train_IL_center(model, old_model, train_loader, labeled_eval_loader, unlabel
             loss_bce_record.update(loss_bce.item(), prob1_ulb.size(0))
             consistency_loss_record.update(consistency_loss.item(), prob2.size(0))
 
-            # LOOK: Incremental loss calculation
             if args.labeled_center > 0:
-                labeled_feats, labeled_labels = sample_labeled_features(class_mean, class_sig, args)     # Prototype
+                labeled_feats, labeled_labels = sample_labeled_features(class_mean, class_sig, args)
                 labeled_output1 = model.forward_feat(labeled_feats)
                 loss_ce_la = args.lambda_proto * criterion1(labeled_output1, labeled_labels)
             else:
                 loss_ce_la = 0
         
-            # LOOK: KD loss calculation
             if args.w_kd > 0:
                 _, _, old_feat = old_model(x)
                 size_1, size_2 = old_feat.size()
@@ -1335,7 +1198,6 @@ def train_IL_center(model, old_model, train_loader, labeled_eval_loader, unlabel
             # record losses
             loss_kd_record.update(loss_kd.item(), x.size(0))
 
-            # LOOK: Total loss = CE_add loss + BCE loss + weighted-MSE-Consistency loss + CE_la loss + KD loss
             loss = loss_bce + loss_ce_add + w * consistency_loss + loss_ce_la + loss_kd
 
             if args.labeled_center > 0 and isinstance(loss_ce_la, torch.Tensor):
@@ -1344,9 +1206,7 @@ def train_IL_center(model, old_model, train_loader, labeled_eval_loader, unlabel
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            # END of current batch
 
-        # complete the current epoch and record training statistics
         # wandb loss logging
         wandb.log({"loss/pseudo-unlab": loss_ce_add_record.avg,
                    "loss/bce": loss_bce_record.avg,
@@ -1357,27 +1217,23 @@ def train_IL_center(model, old_model, train_loader, labeled_eval_loader, unlabel
 
         print('Train Epoch: {} Avg Loss: {:.4f}'.format(epoch, loss_record.avg))
 
-        # validation for unlabeled data with Backbone(on-the-fly) + head-2(on-the-fly)
         print('Head2: test on unlabeled classes')
         args.head = 'head2'
         acc_head2_ul, ind = test(model, unlabeled_eval_loader, args, return_ind=True)
-        #######
 
-        # validation for labeled data with Backbone(on-the-fly) + head-1(frozen)
         print('Head1: test on labeled classes')
         args.head = 'head1'
         acc_head1_lb = test(model, labeled_eval_loader, args, cluster=False)
 
-        # validation for unlabeled data with Backbone(on-the-fly) + head-1(frozen)
         print('Head1: test on unlabeled classes')
         acc_head1_ul = test(model, unlabeled_eval_loader, args, cluster=False, ind=ind)
 
-        # validation for all
         print('Head1: test on all classes w/o clustering')
         acc_head1_all_wo_cluster = test(model, all_eval_loader, args, cluster=False, ind=ind)
 
         print('Head1: test on all classes w/ clustering')
         acc_head1_all_w_cluster = test(model, all_eval_loader, args, cluster=True)
+
         # wandb metrics logging
         wandb.log({
             "val_acc/head2_ul": acc_head2_ul,
@@ -1391,21 +1247,11 @@ def train_IL_center(model, old_model, train_loader, labeled_eval_loader, unlabel
             "misc/w_ramp": w
         }, step=epoch)
 
-        # END of the current epoch
 
 def Generate_Center(model, labeled_train_loader, args):
-    """
-    Generate class-wise: mean, sig, cov
-    :param model:
-    :param labeled_train_loader:
-    :param args:
-    :return: class_mean, class_sig, class_cov
-    """
     all_feat = []
     all_labels = []
 
-    #class_mean = torch.zeros(args.num_labeled_classes, 512).cuda()
-    #class_sig = torch.zeros(args.num_labeled_classes, 512).cuda()
     class_mean = torch.zeros(args.num_labeled_classes, 512).cuda()
     class_sig = torch.zeros(args.num_labeled_classes, 512).cuda()
 
@@ -1417,13 +1263,9 @@ def Generate_Center(model, labeled_train_loader, args):
 
             output1, output2, feat = model(x)
 
-            # all_feat.append(feat.detach().clone())
-            # all_labels.append(label.detach().clone())
             all_feat.append(feat.detach().clone().cuda())
             all_labels.append(label.detach().clone().cuda())
 
-    # all_feat = torch.cat(all_feat, dim=0).cpu()
-    # all_labels = torch.cat(all_labels, dim=0).cpu()
     all_feat = torch.cat(all_feat, dim=0).cuda()
     all_labels = torch.cat(all_labels, dim=0).cuda()
 
@@ -1436,47 +1278,11 @@ def Generate_Center(model, labeled_train_loader, args):
         class_sig[i, :] = (this_var + 1e-5).sqrt()
     print ('Finish')
 
-
-    # ### Calculate Class-Wise Cov
-    # N = all_feat.size(0)
-    # C = args.num_labeled_classes
-    # A = all_feat.size(1)
-    #
-    # NxCxFeatures = all_feat.view(N, 1, A).expand(N, C, A)
-    # # onehot = torch.zeros(N, C)
-    # onehot = torch.zeros(N, C).cuda()
-    # onehot.scatter_(1, all_labels.view(-1, 1), 1)
-    #
-    #
-    # NxCxA_onehot = onehot.view(N, C, 1).expand(N, C, A)
-    #
-    # features_by_sort = NxCxFeatures.mul(NxCxA_onehot)       # DEBUG: exploded
-    #
-    # Amount_CxA = NxCxA_onehot.sum(0)
-    #
-    # Amount_CxA[Amount_CxA == 0] = 1
-    #
-    # ave_CxA = features_by_sort.sum(0) / Amount_CxA
-    #
-    #
-    # var_temp = features_by_sort - ave_CxA.expand(N, C, A).mul(NxCxA_onehot)
-    #
-    #
-    # class_cov = torch.bmm(var_temp.permute(1, 2, 0), var_temp.permute(1, 0, 2) ).div(Amount_CxA.view(C, A, 1).expand(C, A, A))
-
-    class_mean, class_sig, class_cov = class_mean.cuda(), class_sig.cuda(),0# class_cov.cuda()
+    class_mean, class_sig, class_cov = class_mean.cuda(), class_sig.cuda(), 0
 
     return class_mean, class_sig, class_cov
 
 def sample_labeled_features(class_mean, class_sig, args):
-    """
-    Given the Gaussian distribution of the features for each class
-    This function can sample the required number of representative examples along with its label for each class
-    :param class_mean:
-    :param class_sig:
-    :param args:
-    :return:
-    """
     feats = []
     labels = []
 
@@ -1487,24 +1293,9 @@ def sample_labeled_features(class_mean, class_sig, args):
     else:
         num_per_class = 3
 
-    # index = list(range(args.num_labeled_classes))
-    # for _ in range(args.batch_size):
-    #     np.random.shuffle(index)
-    #     this_feat = class_mean[index[0]] + torch.from_numpy(np.float32(np.asarray(np.random.normal(0, 1, 512)))).float().to(device) * class_sig.mean(dim=0)
-    #     this_label = torch.ones(1).cuda() * index[0]
-    #
-    #     feats.append(this_feat.view(1, 512))
-    #     labels.append(this_label)
-
     for i in range(args.num_labeled_classes):
         dist = torch.distributions.Normal(class_mean[i], class_sig.mean(dim=0))
-        # dist = torch.distributions.Normal(class_mean[i], class_sig[i])
-        #this_feat = dist.sample(num_per_class).cuda()           # DEBUG num_per_class is an int
-                                                                 # 'int' object is not iterable
-                                                                 # use dist.sample_n instead
-        # LOOK: NEW
-        # this_feat = dist.sample_n(num_per_class).cuda()  # old API that will be deprecated
-        this_feat = dist.sample((num_per_class,)).cuda() # new API
+        this_feat = dist.sample((num_per_class,)).cuda()
         this_label = torch.ones(this_feat.size(0)).cuda() * i
 
         feats.append(this_feat)
@@ -1516,12 +1307,9 @@ def sample_labeled_features(class_mean, class_sig, args):
     return feats, labels
 
 def isda_aug(fc, features, y, labels, cv_matrix, ratio=1):
-
     N = features.size(0)
     C = y.size(1)
     A = features.size(1)
-
-
 
     weight_m = list(fc.parameters())[0]
 
@@ -1530,11 +1318,6 @@ def isda_aug(fc, features, y, labels, cv_matrix, ratio=1):
     NxW_kj = torch.gather(NxW_ij, 1, labels.view(N, 1, 1).expand(N, C, A))
 
     CV_temp = cv_matrix[labels]
-
-    # sigma2 = ratio * \
-    #          torch.bmm(torch.bmm(NxW_ij - NxW_kj,
-    #                              CV_temp).view(N * C, 1, A),
-    #                    (NxW_ij - NxW_kj).view(N * C, A, 1)).view(N, C)
 
     sigma2 = ratio * torch.bmm(torch.bmm(NxW_ij - NxW_kj, CV_temp), (NxW_ij - NxW_kj).permute(0, 2, 1))
 
@@ -1670,7 +1453,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # Before running settings
     args.cuda = torch.cuda.is_available()
     device = torch.device("cuda" if args.cuda else "cpu")
     seed_torch(args.seed)
@@ -1697,7 +1479,7 @@ if __name__ == "__main__":
                name=wandb_run_name,
                mode=args.wandb_mode)
 
-    # Dataloader Creation
+    # Dataloader creation
     print("used batch size is {}".format(args.batch_size))
     if args.dataset_name == 'cifar10':
         mix_train_loader = CIFAR10LoaderMix(root=args.dataset_root, batch_size=args.batch_size, split='train', aug='twice', shuffle=True, labeled_list=range(args.num_labeled_classes), unlabeled_list=range(args.num_labeled_classes, num_classes))
@@ -1728,31 +1510,23 @@ if __name__ == "__main__":
         labeled_eval_loader = TinyImageNetLoader(batch_size=args.batch_size, num_workers=8, path=args.dataset_root, aug=None, shuffle=False, class_list = range(args.num_labeled_classes), subfolder='val')
         all_eval_loader = TinyImageNetLoader(batch_size=args.batch_size, num_workers=8, path=args.dataset_root, aug=None, shuffle=False, class_list = range(num_classes), subfolder='val')
 
-    # Create the model
+    # Model Creation
     model = ResNet(BasicBlock, [2, 2, 2, 2], args.num_labeled_classes, args.num_unlabeled_classes).to(device)
 
-    # Model Creation
     if args.mode == 'train':
-        # LOOK: load the pre-trained model warmed-up by stage-I training
         state_dict = torch.load(args.warmup_model_dir)
         model.load_state_dict(state_dict, strict=False)
         for name, param in model.named_parameters():
             if 'head' not in name and 'layer4' not in name and 'layer3' not in name and 'layer2' not in name:
                 param.requires_grad = False
 
-    # LOOK: IF KD loss is introduced
-    #     : locked the model_old pretrained with supervised learning from stage-I
-    #     : switch ti to EVAL mode
     if args.w_kd > 0:
         old_model = copy.deepcopy(model)
         old_model = old_model.to(device)
         old_model.eval()
-    # LOOK-TODO: try to turn it to train mode, check how th centroids are moving.
-    #            increase the weight for KD loss a bit
     else:
         old_model = None
 
-    # LOOK:NEW
     if args.track_centroid:
         if args.IL_version == 'OG':
             cntr_tracker = CentroidTracker(model, labeled_train_loader, args.num_labeled_classes, device,
@@ -1764,6 +1538,7 @@ if __name__ == "__main__":
 
     if args.mode == 'train':
         if args.IL_version == 'OG':
+            # Our method: FRoST
             save_weight = model.head1.weight.data.clone()                       # save the weights of head-1
             save_bias = model.head1.bias.data.clone()                           # save the bias of head-1
             model.head1 = nn.Linear(512, num_classes).to(device)                # replace the labeled-class only head-1
@@ -1780,46 +1555,43 @@ if __name__ == "__main__":
 
             train_IL_center(model, old_model, mix_train_loader, labeled_eval_loader, unlabeled_eval_loader,
                             all_eval_loader, class_mean, class_sig, class_cov, args)
+        # Below is ablation studies.
         elif args.IL_version == 'LwF':
-            save_weight = model.head1.weight.data.clone()  # save the weights of head-1
-            save_bias = model.head1.bias.data.clone()  # save the bias of head-1
-            model.head1 = nn.Linear(512, num_classes).to(device)  # replace the labeled-class only head-1
-            # with the head-1-new include nodes for
-            # novel calsses
-            model.head1.weight.data[:args.num_labeled_classes] = save_weight  # put the old weights into the old part
-            model.head1.bias.data[:] = torch.min(save_bias) - 1.  # put the bias
+            save_weight = model.head1.weight.data.clone()           # save the weights of head-1
+            save_bias = model.head1.bias.data.clone()               # save the bias of head-1
+            model.head1 = nn.Linear(512, num_classes).to(device)    # replace the labeled-class only head-1
+
+            model.head1.weight.data[:args.num_labeled_classes] = save_weight    # put the old weights into the old part
+            model.head1.bias.data[:] = torch.min(save_bias) - 1.                # put the bias
             model.head1.bias.data[:args.num_labeled_classes] = save_bias
 
-            train_LwF(model, old_model, mix_train_loader, labeled_eval_loader, unlabeled_eval_loader, all_eval_loader,
-                      args)
+            train_LwF(model, old_model, mix_train_loader, labeled_eval_loader, unlabeled_eval_loader, all_eval_loader, args)
         elif args.IL_version == 'LwFProto':
-            save_weight = model.head1.weight.data.clone()  # save the weights of head-1
-            save_bias = model.head1.bias.data.clone()  # save the bias of head-1
-            model.head1 = nn.Linear(512, num_classes).to(device)  # replace the labeled-class only head-1
-            # with the head-1-new include nodes for
-            # novel calsses
+            save_weight = model.head1.weight.data.clone()           # save the weights of head-1
+            save_bias = model.head1.bias.data.clone()               # save the bias of head-1
+            model.head1 = nn.Linear(512, num_classes).to(device)    # replace the labeled-class only head-1
+
             model.head1.weight.data[:args.num_labeled_classes] = save_weight  # put the old weights into the old part
-            model.head1.bias.data[:] = torch.min(save_bias) - 1.  # put the bias
+            model.head1.bias.data[:] = torch.min(save_bias) - 1.              # put the bias
             model.head1.bias.data[:args.num_labeled_classes] = save_bias
 
             if args.labeled_center > 0:
                 class_mean, class_sig, class_cov = Generate_Center(model, labeled_train_loader, args)
             else:
                 class_mean, class_sig, class_cov = None, None, None
+
             train_LwF_Proto(model, old_model, mix_train_loader, labeled_eval_loader, unlabeled_eval_loader,
                             all_eval_loader, class_mean, class_sig, class_cov, args)
         elif args.IL_version == 'JointHead1':
-            # EXPT: Discard head2
             frozen_layers = ['head2']
             freeze_layers(model, frozen_layers, True)
 
-            save_weight = model.head1.weight.data.clone()  # save the weights of head-1
-            save_bias = model.head1.bias.data.clone()  # save the bias of head-1
-            model.head1 = nn.Linear(512, num_classes).to(device)  # replace the labeled-class only head-1
-            # with the head-1-new include nodes for
-            # novel calsses
-            model.head1.weight.data[:args.num_labeled_classes] = save_weight  # put the old weights into the old part
-            model.head1.bias.data[:] = torch.min(save_bias) - 1.  # put the bias
+            save_weight = model.head1.weight.data.clone()           # save the weights of head-1
+            save_bias = model.head1.bias.data.clone()               # save the bias of head-1
+            model.head1 = nn.Linear(512, num_classes).to(device)    # replace the labeled-class only head-1
+
+            model.head1.weight.data[:args.num_labeled_classes] = save_weight    # put the old weights into the old part
+            model.head1.bias.data[:] = torch.min(save_bias) - 1.                # put the bias
             model.head1.bias.data[:args.num_labeled_classes] = save_bias
 
             if args.labeled_center > 0:
@@ -1829,23 +1601,22 @@ if __name__ == "__main__":
             train_JointHead1(model, old_model, mix_train_loader, labeled_eval_loader, unlabeled_eval_loader,
                              all_eval_loader, class_mean, class_sig, class_cov, args)
         elif args.IL_version == 'JointHead1woPseudo':
-            # EXPT: Discard head2
             frozen_layers = ['head2']
             freeze_layers(model, frozen_layers, True)
 
-            save_weight = model.head1.weight.data.clone()  # save the weights of head-1
-            save_bias = model.head1.bias.data.clone()  # save the bias of head-1
-            model.head1 = nn.Linear(512, num_classes).to(device)  # replace the labeled-class only head-1
-            # with the head-1-new include nodes for
-            # novel calsses
-            model.head1.weight.data[:args.num_labeled_classes] = save_weight  # put the old weights into the old part
-            model.head1.bias.data[:] = torch.min(save_bias) - 1.  # put the bias
+            save_weight = model.head1.weight.data.clone()           # save the weights of head-1
+            save_bias = model.head1.bias.data.clone()               # save the bias of head-1
+            model.head1 = nn.Linear(512, num_classes).to(device)    # replace the labeled-class only head-1
+
+            model.head1.weight.data[:args.num_labeled_classes] = save_weight    # put the old weights into the old part
+            model.head1.bias.data[:] = torch.min(save_bias) - 1.                # put the bias
             model.head1.bias.data[:args.num_labeled_classes] = save_bias
 
             if args.labeled_center > 0:
                 class_mean, class_sig, class_cov = Generate_Center(model, labeled_train_loader, args)
             else:
                 class_mean, class_sig, class_cov = None, None, None
+
             train_JointHead1_woPseudo(model, old_model, mix_train_loader, labeled_eval_loader, unlabeled_eval_loader,
                                       all_eval_loader, class_mean, class_sig, class_cov, args)
         elif args.IL_version == 'SplitHead12':
@@ -1857,20 +1628,19 @@ if __name__ == "__main__":
             train_SplitHead12(model, old_model, mix_train_loader, labeled_eval_loader, unlabeled_eval_loader,
                               all_eval_loader, class_mean, class_sig, class_cov, args)
         elif args.IL_version in ['OGwoPseudo','OGwoKDwoPseudo', 'OGwoProtowoPseudo', 'OGwoKDwoProtowoPseudo']:
-            # OGwoPseudo, EXPT:  OGwoKD-PL, OGwoProto-PL, OGwoKD-Proto-PL
-            save_weight = model.head1.weight.data.clone()  # save the weights of head-1
-            save_bias = model.head1.bias.data.clone()  # save the bias of head-1
-            model.head1 = nn.Linear(512, num_classes).to(device)  # replace the labeled-class only head-1
-            # with the head-1-new include nodes for
-            # novel calsses
-            model.head1.weight.data[:args.num_labeled_classes] = save_weight  # put the old weights into the old part
-            model.head1.bias.data[:] = torch.min(save_bias) - 1.  # put the bias
+            save_weight = model.head1.weight.data.clone()           # save the weights of head-1
+            save_bias = model.head1.bias.data.clone()               # save the bias of head-1
+            model.head1 = nn.Linear(512, num_classes).to(device)    # replace the labeled-class only head-1
+
+            model.head1.weight.data[:args.num_labeled_classes] = save_weight    # put the old weights into the old part
+            model.head1.bias.data[:] = torch.min(save_bias) - 1.                # put the bias
             model.head1.bias.data[:args.num_labeled_classes] = save_bias
 
             if args.labeled_center > 0:
                 class_mean, class_sig, class_cov = Generate_Center(model, labeled_train_loader, args)
             else:
                 class_mean, class_sig, class_cov = None, None, None
+
             train_OGwoPseudo(model, old_model, mix_train_loader, labeled_eval_loader, unlabeled_eval_loader,
                              all_eval_loader, class_mean, class_sig, class_cov, args)
         elif args.IL_version == 'AutoNovel':
@@ -1879,20 +1649,20 @@ if __name__ == "__main__":
 
             train_AutoNovel(model, old_model, mix_train_loader, labeled_eval_loader, unlabeled_eval_loader,
                             all_eval_loader, args)
-        else: # OGwoKD, OGwoProto, EXPT: OGwoKDandProto
-            save_weight = model.head1.weight.data.clone()  # save the weights of head-1
-            save_bias = model.head1.bias.data.clone()  # save the bias of head-1
-            model.head1 = nn.Linear(512, num_classes).to(device)  # replace the labeled-class only head-1
-            # with the head-1-new include nodes for
-            # novel calsses
-            model.head1.weight.data[:args.num_labeled_classes] = save_weight  # put the old weights into the old part
-            model.head1.bias.data[:] = torch.min(save_bias) - 1.  # put the bias
+        else: # EXPT: OGwoKD, OGwoProto, OGwoKDandProto
+            save_weight = model.head1.weight.data.clone()           # save the weights of head-1
+            save_bias = model.head1.bias.data.clone()               # save the bias of head-1
+            model.head1 = nn.Linear(512, num_classes).to(device)    # replace the labeled-class only head-1
+
+            model.head1.weight.data[:args.num_labeled_classes] = save_weight    # put the old weights into the old part
+            model.head1.bias.data[:] = torch.min(save_bias) - 1.                # put the bias
             model.head1.bias.data[:args.num_labeled_classes] = save_bias
 
             if args.labeled_center > 0:
                 class_mean, class_sig, class_cov = Generate_Center(model, labeled_train_loader, args)
             else:
                 class_mean, class_sig, class_cov = None, None, None
+
             train_IL_center(model, old_model, mix_train_loader, labeled_eval_loader, unlabeled_eval_loader,
                             all_eval_loader, class_mean, class_sig, class_cov, args)
 

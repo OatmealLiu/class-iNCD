@@ -182,7 +182,7 @@ if __name__ == "__main__":
         # train the model
         train(model, labeled_train_loader, labeled_eval_loader, args,
               cntr_tracker=cntr_tracker, track_interval=args.track_interval)
-        
+
         # save the warmed-up model
         torch.save(model.state_dict(), args.model_dir)
         print("model saved to {}.".format(args.model_dir))
