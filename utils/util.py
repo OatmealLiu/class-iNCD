@@ -16,6 +16,7 @@ from tqdm import tqdm
 import random
 import os
 import argparse
+
 #######################################################
 # Evaluate Critiron
 #######################################################
@@ -58,9 +59,6 @@ def cluster_acc(y_true, y_pred, return_ind=False):
     w = np.zeros((D, D), dtype=np.int64)
     for i in range(y_pred.size):
         w[y_pred[i], y_true[i]] += 1
-    #ind = linear_assignment(w.max() - w)    # DEBUG: original version, return a tuple of ndarraies represent idx, jdx
-                                             #        it can't be iterated as the method below in a for-loop
-    # LOOK: modified version of code
     ind_arr, jnd_arr = linear_assignment(w.max() - w)
     ind = np.array(list(zip(ind_arr, jnd_arr)))
 
@@ -255,14 +253,6 @@ class CentroidTracker(object):
         return True
 
     def sample_labeled_features(self, dataset_name):
-        """
-        Given the Gaussian distribution of the features for each class
-        This function can sample the required number of representative examples along with its label for each class
-        :param class_mean:
-        :param class_sig:
-        :param args:
-        :return:
-        """
         if self.mode == 'static':
             print("This centroid tracker in in static mode. It can't sample feantures.")
             return False

@@ -2,9 +2,6 @@ from __future__ import absolute_import
 import os
 import sys
 
-# from .osutils import mkdir_if_missing
-
-
 class Logger(object):
     def __init__(self, fpath=None):
         self.console = sys.stdout
