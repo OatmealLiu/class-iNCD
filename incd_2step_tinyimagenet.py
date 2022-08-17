@@ -28,26 +28,23 @@ def train_IL_center(model, old_model, train_loader, labeled_eval_loader, unlabel
 
     optimizer = SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
     exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)
-    criterion1 = nn.CrossEntropyLoss()  # CE loss for labeled data
-    criterion2 = BCE()  # BCE loss for unlabeled data
+    criterion1 = nn.CrossEntropyLoss()      # CE loss for labeled data
+    criterion2 = BCE()                      # BCE loss for unlabeled data
 
-    # START training epoch-by-epoch
     for epoch in range(args.epochs):
         # create loss statistics recorder for each loss
-        loss_record = AverageMeter()  # Total loss recorder
-        loss_ce_add_record = AverageMeter()  # CE loss recorder
-        loss_bce_record = AverageMeter()  # BCE loss recorder
-        consistency_loss_record = AverageMeter()  # MSE consistency loss recorder
-        loss_kd_record = AverageMeter()  # KD loss recorder
+        loss_record = AverageMeter()                # Total loss recorder
+        loss_ce_add_record = AverageMeter()         # CE loss recorder
+        loss_bce_record = AverageMeter()            # BCE loss recorder
+        consistency_loss_record = AverageMeter()    # MSE consistency loss recorder
+        loss_kd_record = AverageMeter()             # KD loss recorder
 
-        # turn on the training mode of the model
         model.train()
         # update LR scheduler for the current epoch
         exp_lr_scheduler.step()
         # update ramp-up coefficient for the current epoch
         w = args.rampup_coefficient * ramps.sigmoid_rampup(epoch, args.rampup_length)
 
-        # START learning batch-by-batch
         for batch_idx, ((x, x_bar), label, idx) in enumerate(tqdm(train_loader)):
             # send the vars to GPU
             x, x_bar, label = x.to(device), x_bar.to(device), label.to(device)
@@ -71,7 +68,6 @@ def train_IL_center(model, old_model, train_loader, labeled_eval_loader, unlabel
             else:
                 model.l2_classifier = False
 
-            # LOOK: now, x only contains unlabeled data
             output1, output2, feat = model(x)
             output1_bar, output2_bar, feat_bar = model(x_bar)
 
@@ -80,7 +76,6 @@ def train_IL_center(model, old_model, train_loader, labeled_eval_loader, unlabel
             prob2, prob2_bar = F.softmax(output2, dim=1), F.softmax(output2_bar, dim=1)
 
             # calculate rank statistics
-            # first cut the gradient propagation of the feat
             rank_feat = (feat).detach()
 
             rank_idx = torch.argsort(rank_feat, dim=1, descending=True)
@@ -102,11 +97,8 @@ def train_IL_center(model, old_model, train_loader, labeled_eval_loader, unlabel
             # get the pseudo label from head-2
             label = (output2).detach().max(1)[1] + args.num_labeled_classes
 
-            # LOOK: CE_add(head-1 only) loss, BCE(head-2 only) loss, MSE consistency(head-2 only) loss calculation
             loss_ce_add = w * criterion1(output1, label) / args.rampup_coefficient * args.increment_coefficient
-            # BCE loss for head-2 of x_ulb
             loss_bce = criterion2(prob1_ulb, prob2_ulb, target_ulb)
-            # MSE Consistency loss of x_ulb
             consistency_loss = F.mse_loss(prob2, prob2_bar)  # + F.mse_loss(prob1, prob1_bar)
 
             # record the losses
@@ -114,15 +106,13 @@ def train_IL_center(model, old_model, train_loader, labeled_eval_loader, unlabel
             loss_bce_record.update(loss_bce.item(), prob1_ulb.size(0))
             consistency_loss_record.update(consistency_loss.item(), prob2.size(0))
 
-            # LOOK: Incremental loss calculation
             if args.labeled_center > 0:
-                labeled_feats, labeled_labels = sample_labeled_features(class_mean, class_sig, args)  # Prototype
+                labeled_feats, labeled_labels = sample_labeled_features(class_mean, class_sig, args)
                 labeled_output1 = model.forward_feat(labeled_feats)
                 loss_ce_la = args.lambda_proto * criterion1(labeled_output1, labeled_labels)
             else:
                 loss_ce_la = 0
 
-            # LOOK: KD loss calculation
             if args.w_kd > 0:
                 _, _, old_feat = old_model(x)
                 size_1, size_2 = old_feat.size()
@@ -134,7 +124,6 @@ def train_IL_center(model, old_model, train_loader, labeled_eval_loader, unlabel
             # record losses
             loss_kd_record.update(loss_kd.item(), x.size(0))
 
-            # LOOK: Total loss = CE_add loss + BCE loss + weighted-MSE-Consistency loss + CE_la loss + KD loss
             loss = loss_bce + loss_ce_add + w * consistency_loss + loss_ce_la + loss_kd
 
             if args.labeled_center > 0 and isinstance(loss_ce_la, torch.Tensor):
@@ -143,9 +132,7 @@ def train_IL_center(model, old_model, train_loader, labeled_eval_loader, unlabel
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            # END of current batch
 
-        # complete the current epoch and record training statistics
         # wandb loss logging
         wandb.log({"loss/pseudo-unlab": loss_ce_add_record.avg,
                    "loss/bce": loss_bce_record.avg,
@@ -156,22 +143,17 @@ def train_IL_center(model, old_model, train_loader, labeled_eval_loader, unlabel
 
         print('Train Epoch: {} Avg Loss: {:.4f}'.format(epoch, loss_record.avg))
 
-        # LOOK: Let's use our evaluation to test their model
-        # validation for unlabeled data with Backbone(on-the-fly) + head-2(on-the-fly)
         print('Head2: test on unlabeled classes')
         args.head = 'head2'
         acc_head2_ul, ind = fair_test1(model, unlabeled_eval_loader, args, return_ind=True)
 
-        # validation for labeled data with Backbone(on-the-fly) + head-1(frozen)
         print('Head1: test on labeled classes')
         args.head = 'head1'
         acc_head1_lb = fair_test1(model, labeled_eval_loader, args, cluster=False)
 
-        # validation for unlabeled data with Backbone(on-the-fly) + head-1(frozen)
         print('Head1: test on unlabeled classes')
         acc_head1_ul = fair_test1(model, unlabeled_eval_loader, args, cluster=False, ind=ind)
 
-        # validation for all
         print('Head1: test on all classes w/o clustering')
         acc_head1_all_wo_cluster = fair_test1(model, all_eval_loader, args, cluster=False, ind=ind)
 
@@ -197,26 +179,23 @@ def train_IL_center_second(model, old_model, train_loader, labeled_eval_loader, 
 
     optimizer = SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
     exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)
-    criterion1 = nn.CrossEntropyLoss()  # CE loss for labeled data
-    criterion2 = BCE()  # BCE loss for unlabeled data
+    criterion1 = nn.CrossEntropyLoss()      # CE loss for labeled data
+    criterion2 = BCE()                      # BCE loss for unlabeled data
 
-    # START training epoch-by-epoch
     for epoch in range(args.epochs):
         # create loss statistics recorder for each loss
-        loss_record = AverageMeter()  # Total loss recorder
-        loss_ce_add_record = AverageMeter()  # CE loss recorder
-        loss_bce_record = AverageMeter()  # BCE loss recorder
-        consistency_loss_record = AverageMeter()  # MSE consistency loss recorder
-        loss_kd_record = AverageMeter()  # KD loss recorder
+        loss_record = AverageMeter()                # Total loss recorder
+        loss_ce_add_record = AverageMeter()         # CE loss recorder
+        loss_bce_record = AverageMeter()            # BCE loss recorder
+        consistency_loss_record = AverageMeter()    # MSE consistency loss recorder
+        loss_kd_record = AverageMeter()             # KD loss recorder
 
-        # turn on the training mode of the model
         model.train()
         # update LR scheduler for the current epoch
         exp_lr_scheduler.step()
         # update ramp-up coefficient for the current epoch
         w = args.rampup_coefficient * ramps.sigmoid_rampup(epoch, args.rampup_length)
 
-        # START learning batch-by-batch
         for batch_idx, ((x, x_bar), label, idx) in enumerate(tqdm(train_loader)):
             # send the vars to GPU
             x, x_bar, label = x.to(device), x_bar.to(device), label.to(device)
@@ -240,7 +219,6 @@ def train_IL_center_second(model, old_model, train_loader, labeled_eval_loader, 
             else:
                 model.l2_classifier = False
 
-            # LOOK: now, x only contains unlabeled data
             output1, output2, feat = model(x)
             output1_bar, output2_bar, feat_bar = model(x_bar)
 
@@ -249,7 +227,6 @@ def train_IL_center_second(model, old_model, train_loader, labeled_eval_loader, 
             prob2, prob2_bar = F.softmax(output2, dim=1), F.softmax(output2_bar, dim=1)
 
             # calculate rank statistics
-            # first cut the gradient propagation of the feat
             rank_feat = (feat).detach()
 
             rank_idx = torch.argsort(rank_feat, dim=1, descending=True)
@@ -271,11 +248,8 @@ def train_IL_center_second(model, old_model, train_loader, labeled_eval_loader, 
             # get the pseudo label from head-2
             label = (output2).detach().max(1)[1] + args.num_labeled_classes + args.num_unlabeled_classes1
 
-            # LOOK: CE_add(head-1 only) loss, BCE(head-2 only) loss, MSE consistency(head-2 only) loss calculation
             loss_ce_add = w * criterion1(output1, label) / args.rampup_coefficient * args.increment_coefficient
-            # BCE loss for head-2 of x_ulb
             loss_bce = criterion2(prob1_ulb, prob2_ulb, target_ulb)
-            # MSE Consistency loss of x_ulb
             consistency_loss = F.mse_loss(prob2, prob2_bar)  # + F.mse_loss(prob1, prob1_bar)
 
             # record the losses
@@ -283,15 +257,13 @@ def train_IL_center_second(model, old_model, train_loader, labeled_eval_loader, 
             loss_bce_record.update(loss_bce.item(), prob1_ulb.size(0))
             consistency_loss_record.update(consistency_loss.item(), prob2.size(0))
 
-            # LOOK: Incremental loss calculation
             if args.labeled_center > 0:
-                labeled_feats, labeled_labels = sample_all_features(class_mean, class_sig, args)  # Prototype
+                labeled_feats, labeled_labels = sample_all_features(class_mean, class_sig, args)
                 labeled_output1 = model.forward_feat(labeled_feats)
                 loss_ce_la = args.lambda_proto * criterion1(labeled_output1, labeled_labels)
             else:
                 loss_ce_la = 0
 
-            # LOOK: KD loss calculation
             if args.w_kd > 0:
                 _, _, old_feat = old_model(x)
                 size_1, size_2 = old_feat.size()
@@ -303,7 +275,6 @@ def train_IL_center_second(model, old_model, train_loader, labeled_eval_loader, 
             # record losses
             loss_kd_record.update(loss_kd.item(), x.size(0))
 
-            # LOOK: Total loss = CE_add loss + BCE loss + weighted-MSE-Consistency loss + CE_la loss + KD loss
             loss = loss_bce + loss_ce_add + w * consistency_loss + loss_ce_la + loss_kd
 
             if args.labeled_center > 0 and isinstance(loss_ce_la, torch.Tensor):
@@ -312,10 +283,8 @@ def train_IL_center_second(model, old_model, train_loader, labeled_eval_loader, 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            # END of current batch
 
         # complete the current epoch and record training statistics
-        # wandb loss logging
         wandb.log({"loss/pseudo-unlab": loss_ce_add_record.avg,
                    "loss/bce": loss_bce_record.avg,
                    "loss/consistency": consistency_loss_record.avg,
@@ -325,8 +294,6 @@ def train_IL_center_second(model, old_model, train_loader, labeled_eval_loader, 
 
         print('Train Epoch: {} Avg Loss: {:.4f}'.format(epoch, loss_record.avg))
 
-        # LOOK: Let's use our evaluation to test their model
-        # validation for unlabeled data with Backbone(on-the-fly) + head-2(on-the-fly)
         args.head = 'head2'
         print('Head2: test on PRE-unlabeled classes')
         args.test_new = 'new1'
@@ -337,29 +304,24 @@ def train_IL_center_second(model, old_model, train_loader, labeled_eval_loader, 
         print('Head3: test on unlabeled classes')
         acc_head3_ul, ind2 = fair_test2(model, unlabeled_eval_loader, args, return_ind=True)
 
-
-        # validation for labeled data with Backbone(on-the-fly) + head-1(frozen)
         args.head = 'head1'
         print('Head1: test on labeled classes')
         acc_head1_lb = fair_test2(model, labeled_eval_loader, args, cluster=False)
 
-        # validation for unlabeled data with Backbone(on-the-fly) + head-1(frozen)
         print('Head1: test on PRE-unlabeled classes')
         args.test_new = 'new1'
         acc_head1_ul1 = fair_test2(model, p_unlabeled_eval_loader, args, cluster=False, ind=ind1)
 
-        # validation for unlabeled data with Backbone(on-the-fly) + head-1(frozen)
         print('Head1: test on CRT-unlabeled classes')
         args.test_new = 'new2'
         acc_head1_ul2 = fair_test2(model, unlabeled_eval_loader, args, cluster=False, ind=ind2)
 
-        # validation for all
         print('Head1: test on all classes w/o clustering')
         acc_head1_all_wo_cluster = (args.num_labeled_classes*acc_head1_lb + args.num_unlabeled_classes1*acc_head1_ul1 + args.num_unlabeled_classes2 * acc_head1_ul2) / (args.num_labeled_classes+args.num_unlabeled_classes1+args.num_unlabeled_classes2)
 
-        # validation for all
         print('Head1: test on all classes w/ clustering')
         acc_head1_all_w_cluster = fair_test2(model, all_eval_loader, args, cluster=True)
+
         # wandb metrics logging
         wandb.log({
             "val_acc/head2_ul": acc_head2_ul,
@@ -370,21 +332,11 @@ def train_IL_center_second(model, old_model, train_loader, labeled_eval_loader, 
             "val_acc/head1_all_wo_clutering": acc_head1_all_wo_cluster,
             "val_acc/head1_all_w_clutering": acc_head1_all_w_cluster,
         }, step=epoch)
-        # LOOK: our method ends
 
 def Generate_Center(model, labeled_train_loader, args):
-    """
-    Generate class-wise: mean, sig, cov
-    :param model:
-    :param labeled_train_loader:
-    :param args:
-    :return: class_mean, class_sig, class_cov
-    """
     all_feat = []
     all_labels = []
 
-    # class_mean = torch.zeros(args.num_labeled_classes, 512).cuda()
-    # class_sig = torch.zeros(args.num_labeled_classes, 512).cuda()
     class_mean = torch.zeros(args.num_labeled_classes, 512).cuda()
     class_sig = torch.zeros(args.num_labeled_classes, 512).cuda()
 
@@ -393,16 +345,11 @@ def Generate_Center(model, labeled_train_loader, args):
         model.eval()
         for batch_idx, (x, label, idx) in enumerate(tqdm(labeled_train_loader)):
             x, label = x.to(device), label.to(device)
-
             output1, output2, feat = model(x)
 
-            # all_feat.append(feat.detach().clone())
-            # all_labels.append(label.detach().clone())
             all_feat.append(feat.detach().clone().cuda())
             all_labels.append(label.detach().clone().cuda())
 
-    # all_feat = torch.cat(all_feat, dim=0).cpu()
-    # all_labels = torch.cat(all_labels, dim=0).cpu()
     all_feat = torch.cat(all_feat, dim=0).cuda()
     all_labels = torch.cat(all_labels, dim=0).cuda()
 
@@ -431,7 +378,6 @@ def Generate_Unlabel_Center(model, unlabeled_train_loader, args):
         for batch_idx, (x, label, idx) in enumerate(tqdm(unlabeled_train_loader)):
             x, _ = x.to(device), label.to(device)
             output1, output2, feat = model(x)
-            # label = (output2).detach().max(1)[1] + args.num_labeled_classes
             label = (output2).detach().max(1)[1]
 
             all_feat.append(feat.detach().clone().cuda())
@@ -441,14 +387,8 @@ def Generate_Unlabel_Center(model, unlabeled_train_loader, args):
     all_labels = torch.cat(all_labels, dim=0).cuda()
 
     print('Calculate UnLabeled Mean-Var')
-    # for i in range(args.num_labeled_classes, args.num_labeled_classes+args.num_unlabeled_classes1):
     for i in range(args.num_unlabeled_classes1):
         this_feat = all_feat[all_labels == i]
-        # if len(this_feat) == 0:
-        #     print("============>>>>> no class pred!")
-        #     class_mean[i, :] = 0
-        #     class_sig[i, :] = 1
-        #     continue
         this_mean = this_feat.mean(dim=0)
         this_var = this_feat.var(dim=0)
         class_mean[i, :] = this_mean
@@ -494,8 +434,6 @@ def sample_all_features(class_mean, class_sig, args):
         num_per_class = 3
 
     for i in range(args.num_labeled_classes+args.num_unlabeled_classes1):
-        # if class_mean[i].mean() == 0:
-        #     continue
         dist = torch.distributions.Normal(class_mean[i], class_sig.mean(dim=0))
         this_feat = dist.sample((num_per_class,)).cuda()  # new API
         this_label = torch.ones(this_feat.size(0)).cuda() * i
@@ -520,11 +458,6 @@ def isda_aug(fc, features, y, labels, cv_matrix, ratio=1):
     NxW_kj = torch.gather(NxW_ij, 1, labels.view(N, 1, 1).expand(N, C, A))
 
     CV_temp = cv_matrix[labels]
-
-    # sigma2 = ratio * \
-    #          torch.bmm(torch.bmm(NxW_ij - NxW_kj,
-    #                              CV_temp).view(N * C, 1, A),
-    #                    (NxW_ij - NxW_kj).view(N * C, A, 1)).view(N, C)
 
     sigma2 = ratio * torch.bmm(torch.bmm(NxW_ij - NxW_kj, CV_temp), (NxW_ij - NxW_kj).permute(0, 2, 1))
 
@@ -799,7 +732,6 @@ if __name__ == "__main__":
                         default='./results/two_incd_cifar100_DTC/DTC_cifar100_incd_resnet18_80.pth')
     args = parser.parse_args()
 
-    # Before running settings
     args.cuda = torch.cuda.is_available()
     device = torch.device("cuda" if args.cuda else "cpu")
     args.device = torch.device("cuda" if args.cuda else "cpu")
@@ -837,7 +769,9 @@ if __name__ == "__main__":
                                                    aug=None, shuffle=False,
                                                    class_list=range(args.num_labeled_classes, num_classes),
                                                    subfolder='val')
-        labeled_train_loader = TinyImageNetLoader(batch_size=args.batch_size, num_workers=8, path=args.dataset_root, aug=None, shuffle=True, class_list = range(args.num_labeled_classes), subfolder='train')
+        labeled_train_loader = TinyImageNetLoader(batch_size=args.batch_size, num_workers=8, path=args.dataset_root,
+                                                  aug=None, shuffle=True, class_list = range(args.num_labeled_classes),
+                                                  subfolder='train')
 
         labeled_test_loader = TinyImageNetLoader(batch_size=args.batch_size, num_workers=8, path=args.dataset_root,
                                                  aug=None, shuffle=False, class_list=range(args.num_labeled_classes),
@@ -845,11 +779,11 @@ if __name__ == "__main__":
         all_test_loader = TinyImageNetLoader(batch_size=args.batch_size, num_workers=8, path=args.dataset_root,
                                              aug=None,
                                              shuffle=False, class_list=range(num_classes), subfolder='val')
-        # Create the model
+
+        # Model Creation
         model = ResNet(BasicBlock, [2, 2, 2, 2], args.num_labeled_classes,
                        args.num_unlabeled_classes1+args.num_unlabeled_classes2).to(device)
 
-        # Model Creation
         state_dict = torch.load(args.warmup_model_dir)
         model.load_state_dict(state_dict, strict=False)
         model.head2 = nn.Linear(512, args.num_unlabeled_classes1).to(device)
@@ -864,13 +798,12 @@ if __name__ == "__main__":
         else:
             old_model = None
 
-        save_weight = model.head1.weight.data.clone()  # save the weights of head-1
-        save_bias = model.head1.bias.data.clone()  # save the bias of head-1
-        model.head1 = nn.Linear(512, num_classes).to(device)  # replace the labeled-class only head-1
-        # with the head-1-new include nodes for
-        # novel calsses
-        model.head1.weight.data[:args.num_labeled_classes] = save_weight  # put the old weights into the old part
-        model.head1.bias.data[:] = torch.min(save_bias) - 1.  # put the bias
+        save_weight = model.head1.weight.data.clone()           # save the weights of head-1
+        save_bias = model.head1.bias.data.clone()               # save the bias of head-1
+        model.head1 = nn.Linear(512, num_classes).to(device)    # replace the labeled-class only head-1
+
+        model.head1.weight.data[:args.num_labeled_classes] = save_weight    # put the old weights into the old part
+        model.head1.bias.data[:] = torch.min(save_bias) - 1.                # put the bias
         model.head1.bias.data[:args.num_labeled_classes] = save_bias
 
         if args.labeled_center > 0:
@@ -884,7 +817,6 @@ if __name__ == "__main__":
         torch.save(model.state_dict(), args.model_dir)
         print("model saved to {}.".format(args.model_dir))
 
-        # LOOK: OUR TEST FLOW
         # =============================== Final Test ===============================
         acc_list = []
 
@@ -946,7 +878,9 @@ if __name__ == "__main__":
                                                        args.num_labeled_classes + args.num_unlabeled_classes1,
                                                        num_classes),
                                                    subfolder='val')
-        labeled_train_loader = TinyImageNetLoader(batch_size=args.batch_size, num_workers=8, path=args.dataset_root, aug=None, shuffle=True, class_list = range(args.num_labeled_classes), subfolder='train')
+        labeled_train_loader = TinyImageNetLoader(batch_size=args.batch_size, num_workers=8, path=args.dataset_root,
+                                                  aug=None, shuffle=True, class_list = range(args.num_labeled_classes),
+                                                  subfolder='train')
         labeled_test_loader = TinyImageNetLoader(batch_size=args.batch_size, num_workers=8, path=args.dataset_root,
                                                  aug=None, shuffle=False, class_list=range(args.num_labeled_classes),
                                                  subfolder='val')
@@ -1017,7 +951,6 @@ if __name__ == "__main__":
         torch.save(model_new2.state_dict(), args.model_dir)
         print("model saved to {}.".format(args.model_dir))
 
-        # LOOK: OUR TEST FLOW
         # =============================== Final Test ===============================
         print("=" * 150)
         print("\t\t\t\ttest function 1")
@@ -1095,7 +1028,6 @@ if __name__ == "__main__":
               'All_wo_cluster, All_w_cluster, Head2->Train, Test, Head3->Train, Test')
         print(acc_list)
 
-        # LOOK: OUR TEST FLOW
         # =============================== Final Test ===============================
         print("="*150)
         print("\t\t\t\ttest function 2")
