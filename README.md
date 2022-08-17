@@ -43,34 +43,34 @@ Option 2
 
 ### Step 1: Supervised learning with labelled data
 ```shell
-# For CIFAR10
+# Pre-train on CIFAR-10 (# of base classes: 5)
 CUDA_VISIBLE_DEVICES=0 sh step1_scripts/pretrain_cifar10.sh
 
-# For CIFAR100
+# Pre-train on CIFAR-100 (# of base classes: 80)
 CUDA_VISIBLE_DEVICES=0 sh step1_scripts/pretrain_cifar100.sh
 
-# For TinyImagenet
+# Pre-train on TinyImagenet (# of base classes: 180)
 CUDA_VISIBLE_DEVICES=0 sh step1_scripts/pretrain_tinyimagenet.sh
 ```
 
 ### Step 2: Class-incremental Novel Class Discovery (class-iNCD) with unlabeled data
 ```shell
-# Train on CIFAR10
+# class-iNCD on CIFAR-10 (# of novel classes: 5)
 CUDA_VISIBLE_DEVICES=0 sh step2_scripts_cifar10/incd_OG_FRoST.sh
 
-# Train on CIFAR100
+# class-iNCD on CIFAR-100 (# of novel classes: 20)
 CUDA_VISIBLE_DEVICES=0 sh step2_scripts_cifar100/incd_OG_FRoST.sh
 
-# Train on TinyImagenet
+# class-iNCD on TinyImagenet (# of novel classes: 20)
 CUDA_VISIBLE_DEVICES=0 sh step2_scripts_tinyimagenet/incd_OG_FRoST.sh
 ```
 
 ### Two-steps class-iNCD
 ```shell
-# Train on CIFAR100
+# Two-step class-iNCD on CIFAR-100 (80-10-10)
 CUDA_VISIBLE_DEVICES=0 sh two-steps_scripts/auto_2step_incd_OG_FRoST_cifar100.sh
 
-# Train on TinyImagenet
+# Two-step class-iNCD on TinyImagenet (180-10-10)
 CUDA_VISIBLE_DEVICES=0 sh two-steps_scripts/auto_2step_incd_OG_FRoST_tinyimagenet.sh
 ```
 
