@@ -77,7 +77,7 @@ CUDA_VISIBLE_DEVICES=0 sh two-steps_scripts/auto_2step_incd_OG_FRoST_tinyimagene
 ## Evaluation Protocol
 ![](figures/evalutation.png)
 
-## Evaluation results
+## Evaluation Results
 Table 1: Comparison with state-of-the-art methods in class-iNCD
 
 ![](figures/results_SOTA-HM.png)
@@ -99,7 +99,7 @@ Table 5: Ablation study on having a single and separated heads for old and new c
 ![](figures/results_heads.png)
 
 
-### Citation
+## Citation
 ```
 @inproceedings{roy2022class,
   title={Class-incremental Novel Class Discovery},
