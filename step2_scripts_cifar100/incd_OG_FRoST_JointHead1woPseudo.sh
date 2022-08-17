@@ -7,11 +7,11 @@ python -W ignore incd_ablation_expt.py \
         --lr 0.1 \
         --gamma 0.1 \
         --weight_decay 1e-4 \
-        --step_size 340 \
-        --batch_size 256 \
-        --epochs 500 \
-        --rampup_length 300 \
-        --rampup_coefficient 25 \
+        --step_size 170 \
+        --batch_size 128 \
+        --epochs 200 \
+        --rampup_length 150 \
+        --rampup_coefficient 50 \
         --num_unlabeled_classes 20 \
         --num_labeled_classes 80 \
         --dataset_name cifar100 \

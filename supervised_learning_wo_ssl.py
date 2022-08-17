@@ -98,7 +98,7 @@ if __name__ == "__main__":
     parser.add_argument('--gamma', type=float, default=0.1)
     parser.add_argument('--momentum', type=float, default=0.9)
     parser.add_argument('--weight_decay', type=float, default=1e-4)
-    parser.add_argument('--epochs', default=100, type=int)
+    parser.add_argument('--epochs', default=200, type=int)
     parser.add_argument('--step_size', default=30, type=int)
     parser.add_argument('--batch_size', default=128, type=int)
     parser.add_argument('--num_unlabeled_classes', default=5, type=int)

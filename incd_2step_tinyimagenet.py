@@ -725,7 +725,7 @@ if __name__ == "__main__":
     parser.add_argument('--lambda_proto', type=float, default=1.0, help='weight for the source prototypes loss')
     parser.add_argument('--step', type=str, default='first', choices=['first', 'second'])
     parser.add_argument('--first_step_dir', type=str,
-                        default='./results/two_incd_cifar100_DTC/DTC_cifar100_incd_resnet18_80.pth')
+                        default='./data/experiments/incd_2step_tinyimagenet_tinyimagenet/first_FRoST_1st_OG_kd10_p1_tinyimagenet.pth')
     args = parser.parse_args()
 
     args.cuda = torch.cuda.is_available()

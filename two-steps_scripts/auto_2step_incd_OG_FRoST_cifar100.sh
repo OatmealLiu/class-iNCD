@@ -7,11 +7,11 @@ python -W ignore incd_2step_cifar100.py \
         --lr 0.1 \
         --gamma 0.1 \
         --weight_decay 1e-4 \
-        --step_size 340 \
-        --batch_size 256 \
-        --epochs 400 \
-        --rampup_length 300 \
-        --rampup_coefficient 25 \
+        --step_size 170 \
+        --batch_size 128 \
+        --epochs 200 \
+        --rampup_length 150 \
+        --rampup_coefficient 50 \
         --num_unlabeled_classes1 10 \
         --num_unlabeled_classes2 10 \
         --num_labeled_classes 80 \
@@ -35,11 +35,11 @@ python -W ignore incd_2step_cifar100.py \
         --lr 0.1 \
         --gamma 0.1 \
         --weight_decay 1e-4 \
-        --step_size 340 \
-        --batch_size 256 \
-        --epochs 400 \
-        --rampup_length 300 \
-        --rampup_coefficient 25 \
+        --step_size 170 \
+        --batch_size 128 \
+        --epochs 200 \
+        --rampup_length 150 \
+        --rampup_coefficient 50 \
         --num_unlabeled_classes1 10 \
         --num_unlabeled_classes2 10 \
         --num_labeled_classes 80 \
