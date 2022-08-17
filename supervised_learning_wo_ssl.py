@@ -16,25 +16,12 @@ from data.tinyimagenetloader import TinyImageNetLoader
 
 
 def train(model, train_loader, labeled_eval_loader, args, cntr_tracker=None, track_interval=10):
-    """
-    Stage-I: supervised-learning
-    :param model: give a model
-    :param train_loader: dataloader for the training dataset of labeled data
-    :param labeled_eval_loader: dataloader for the validation dataset of labeled data
-    :param args: contains the hyperparameters for training
-    :return: N/A
-    """
-    # create DNN components
     optimizer = SGD(model.parameters(), lr=args.lr, momentum=args.momentum,
-                    weight_decay=args.weight_decay)  # create optimizer
-    exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)  # create LR shceduler
-    criterion1 = nn.CrossEntropyLoss()  # create CE loss
+                    weight_decay=args.weight_decay)
+    exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)
+    criterion1 = nn.CrossEntropyLoss()
 
-    # start training epoch-by-epoch
     for epoch in range(args.epochs):
-        # LOOK: we should calculate and temp-save the feature here
-        #     : we should save the extracted feature for each class epoch-wise during Stage-I training
-        #     : in order to monitor the movement of the Gaussion
         if cntr_tracker:
             if track_interval != 1:
                 if epoch % track_interval - 1 == 0:
@@ -49,9 +36,7 @@ def train(model, train_loader, labeled_eval_loader, args, cntr_tracker=None, tra
         # update LR scheduler
         exp_lr_scheduler.step()
 
-        # start the training for the current epoch batch-by-batch
         for batch_idx, (x, label, idx) in enumerate(tqdm(train_loader)):
-            # normalize the prototypes
             if args.l2_classifier:
                 model.l2_classifier = True
                 with torch.no_grad():
@@ -75,9 +60,6 @@ def train(model, train_loader, labeled_eval_loader, args, cntr_tracker=None, tra
         args.head = 'head1'
         _, acc_head1_lb_warmup = test(model, labeled_eval_loader, args)
         wandb.log({"val_acc/head1_lb_warm": acc_head1_lb_warmup}, step=epoch)
-        # # LOOK: we should calculate and temp-save the feature here
-        # #     : we should save the extracted feature for each class epoch-wise during Stage-I training
-        # #     : in order to monitor the movement of the Gaussion
         # if cntr_tracker:
         #     if epoch % track_interval-1 == 0:
         #         cntr_tracker.generate(epoch)
@@ -97,7 +79,7 @@ def test(model, test_loader, args):
         _, pred = output.max(1)
         targets = np.append(targets, label.cpu().numpy())
         preds = np.append(preds, pred.cpu().numpy())
-    # DEBUG
+
     # acc, nmi, ari = cluster_acc(targets.astype(int), preds.astype(int)), nmi_score(targets, preds), ari_score(targets, preds)
     acc = cluster_acc(targets.astype(int), preds.astype(int))
     nmi = nmi_score(targets, preds)
@@ -189,7 +171,6 @@ if __name__ == "__main__":
                                                  aug=None, shuffle=False, class_list=range(args.num_labeled_classes),
                                                  subfolder='val')
 
-    # LOOK:NEW
     # create the centroid tracker if tracking mode is on
     if args.track_centroid:
         cntr_tracker = CentroidTracker(model, labeled_train_loader, args.num_labeled_classes, device,
@@ -201,6 +182,7 @@ if __name__ == "__main__":
         # train the model
         train(model, labeled_train_loader, labeled_eval_loader, args,
               cntr_tracker=cntr_tracker, track_interval=args.track_interval)
+        
         # save the warmed-up model
         torch.save(model.state_dict(), args.model_dir)
         print("model saved to {}.".format(args.model_dir))
