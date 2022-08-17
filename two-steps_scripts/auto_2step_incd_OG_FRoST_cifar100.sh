@@ -17,7 +17,7 @@ python -W ignore incd_2step_cifar100.py \
         --num_labeled_classes 80 \
         --dataset_name cifar100 \
         --seed 10 \
-        --model_name ProINCD_1st_OG_kd10_p1_cifar100 \
+        --model_name FRoST_1st_OG_kd10_p1_cifar100 \
         --increment_coefficient 0.01 \
         --IL_version OG \
         --labeled_center 10 \
@@ -45,7 +45,7 @@ python -W ignore incd_2step_cifar100.py \
         --num_labeled_classes 80 \
         --dataset_name cifar100 \
         --seed 10 \
-        --model_name ProINCD_2nd_OG_kd10_p1_cifar100 \
+        --model_name FRoST_2nd_OG_kd10_p1_cifar100 \
         --increment_coefficient 0.01 \
         --IL_version OG \
         --labeled_center 10 \
@@ -55,5 +55,5 @@ python -W ignore incd_2step_cifar100.py \
         --wandb_mode online \
         --wandb_entity oatmealliu \
         --step second \
-        --first_step_dir ./data/experiments/incd_2step_cifar100_cifar100/first_ProINCD_1st_OG_kd10_p1_cifar100.pth
+        --first_step_dir ./data/experiments/incd_2step_cifar100_cifar100/first_FRoST_1st_OG_kd10_p1_cifar100.pth
 

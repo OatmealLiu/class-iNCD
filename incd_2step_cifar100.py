@@ -194,7 +194,6 @@ def train_IL_center_second(model, old_model, train_loader, labeled_eval_loader, 
         # update ramp-up coefficient for the current epoch
         w = args.rampup_coefficient * ramps.sigmoid_rampup(epoch, args.rampup_length)
 
-        # START learning batch-by-batch
         for batch_idx, ((x, x_bar), label, idx) in enumerate(tqdm(train_loader)):
             # send the vars to GPU
             x, x_bar, label = x.to(device), x_bar.to(device), label.to(device)

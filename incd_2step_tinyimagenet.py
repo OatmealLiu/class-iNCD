@@ -168,8 +168,6 @@ def train_IL_center(model, old_model, train_loader, labeled_eval_loader, unlabel
             "val_acc/head1_all_wo_clutering": acc_head1_all_wo_cluster,
             "val_acc/head1_all_w_clustering": acc_head1_all_w_cluster
         }, step=epoch)
-        # LOOK: our method ends
-
 
 def train_IL_center_second(model, old_model, train_loader, labeled_eval_loader, unlabeled_eval_loader, all_eval_loader,
                            class_mean, class_sig, p_unlabeled_eval_loader, args):
@@ -682,10 +680,8 @@ def freeze_layers(model, layer_names, freeze=True):
         for param in child.parameters():
             param.requires_grad = not freeze
 
-
 def unfreeze_layers(model, layer_names):
     freeze_layers(model, layer_names, False)
-
 
 if __name__ == "__main__":
     import argparse

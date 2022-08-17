@@ -17,7 +17,7 @@ python -W ignore incd_2step_tinyimagenet.py \
         --num_labeled_classes 180 \
         --dataset_name tinyimagenet \
         --seed 10 \
-        --model_name ProINCD_1st_OG_kd10_p1_tinyimagenet \
+        --model_name FRoST_1st_OG_kd10_p1_tinyimagenet \
         --increment_coefficient 0.01 \
         --IL_version OG \
         --labeled_center 1 \
@@ -45,7 +45,7 @@ python -W ignore incd_2step_tinyimagenet.py \
         --num_labeled_classes 180 \
         --dataset_name tinyimagenet \
         --seed 10 \
-        --model_name ProINCD_2nd_OG_kd10_p1_tinyimagenet \
+        --model_name FRoST_2nd_OG_kd10_p1_tinyimagenet \
         --increment_coefficient 0.01 \
         --IL_version OG \
         --labeled_center 1 \
@@ -55,4 +55,4 @@ python -W ignore incd_2step_tinyimagenet.py \
         --wandb_mode online \
         --wandb_entity oatmealliu \
         --step second \
-        --first_step_dir ./data/experiments/incd_2step_tinyimagenet_tinyimagenet/first_ProINCD_1st_OG_kd10_p1_tinyimagenet.pth
+        --first_step_dir ./data/experiments/incd_2step_tinyimagenet_tinyimagenet/first_FRoST_1st_OG_kd10_p1_tinyimagenet.pth
