@@ -1381,7 +1381,8 @@ def test(model, test_loader, args, cluster=True, ind=None, return_ind=False):
             id_map = ind[idx, 0]
             id_map += args.num_labeled_classes
 
-            targets_new = targets
+            # targets_new = targets <-- this is not deep copy anymore due to NumPy version change
+            targets_new = np.copy(targets)
             for i in range(args.num_unlabeled_classes):
                 targets_new[targets == i + args.num_labeled_classes] = id_map[i]
             targets = targets_new
@@ -1473,11 +1474,12 @@ if __name__ == "__main__":
 
     # WandB setting
     # use wandb logging
-    wandb_run_name = args.model_name + '_fixl1_s_' + str(args.seed)
-    wandb.init(project='incd_dev_miu',
-               entity=args.wandb_entity,
-               name=wandb_run_name,
-               mode=args.wandb_mode)
+    if args.mode == 'train':
+        wandb_run_name = args.model_name + '_fixl1_s_' + str(args.seed)
+        wandb.init(project='incd_dev_miu',
+                   entity=args.wandb_entity,
+                   name=wandb_run_name,
+                   mode=args.wandb_mode)
 
     # Dataloader creation
     print("used batch size is {}".format(args.batch_size))
@@ -1669,11 +1671,41 @@ if __name__ == "__main__":
         torch.save(model.state_dict(), args.model_dir)
         print("model saved to {}.".format(args.model_dir))
     else:
-        print("model loaded from {}.".format(args.model_dir))
+        print("test the trained model only")
         if args.IL_version == 'OG':
             model.head1 = nn.Linear(512, num_classes).to(device)
-        model.load_state_dict(torch.load(args.model_dir))
-
+            state_dict = torch.load(args.model_dir)
+            model.load_state_dict(state_dict, strict=False)
+        elif args.IL_version == 'LwF':
+            model.head1 = nn.Linear(512, num_classes).to(device)
+            state_dict = torch.load(args.model_dir)
+            model.load_state_dict(state_dict, strict=False)
+        elif args.IL_version == 'LwFProto':
+            model.head1 = nn.Linear(512, num_classes).to(device)
+            state_dict = torch.load(args.model_dir)
+            model.load_state_dict(state_dict, strict=False)
+        elif args.IL_version == 'JointHead1':
+            model.head1 = nn.Linear(512, num_classes).to(device)
+            state_dict = torch.load(args.model_dir)
+            model.load_state_dict(state_dict, strict=False)
+        elif args.IL_version == 'JointHead1woPseudo':
+            model.head1 = nn.Linear(512, num_classes).to(device)
+            state_dict = torch.load(args.model_dir)
+            model.load_state_dict(state_dict, strict=False)
+        elif args.IL_version == 'SplitHead12':
+            state_dict = torch.load(args.model_dir)
+            model.load_state_dict(state_dict, strict=False)
+        elif args.IL_version in ['OGwoPseudo', 'OGwoKDwoPseudo', 'OGwoProtowoPseudo', 'OGwoKDwoProtowoPseudo']:
+            model.head1 = nn.Linear(512, num_classes).to(device)
+            state_dict = torch.load(args.model_dir)
+            model.load_state_dict(state_dict, strict=False)
+        elif args.IL_version == 'AutoNovel':
+            state_dict = torch.load(args.model_dir)
+            model.load_state_dict(state_dict, strict=False)
+        else:  # OGwoKD, OGwoProto, OGwoKDandProto
+            model.head1 = nn.Linear(512, num_classes).to(device)
+            state_dict = torch.load(args.model_dir)
+            model.load_state_dict(state_dict, strict=False)
 
 # =============================== Final Test ===============================
     acc_list = []

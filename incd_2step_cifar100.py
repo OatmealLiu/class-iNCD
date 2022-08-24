@@ -521,7 +521,8 @@ def test(model, test_loader, args, cluster=True, ind=None, return_ind=False):
             id_map = ind[idx, 0]
             id_map += args.num_labeled_classes
 
-            targets_new = targets
+            # targets_new = targets <-- this is not deep copy anymore due to NumPy version change
+            targets_new = np.copy(targets)
             for i in range(args.num_unlabeled_classes):
                 targets_new[targets == i + args.num_labeled_classes] = id_map[i]
             targets = targets_new
@@ -578,7 +579,8 @@ def fair_test1(model, test_loader, args, cluster=True, ind=None, return_ind=Fals
                 id_map = ind[idx, 0]
                 id_map += args.num_labeled_classes
 
-                targets_new = targets
+                # targets_new = targets <-- this is not deep copy anymore due to NumPy version change
+                targets_new = np.copy(targets)
                 for i in range(args.num_unlabeled_classes1):
                     targets_new[targets == i + args.num_labeled_classes] = id_map[i]
                 targets = targets_new
@@ -588,7 +590,8 @@ def fair_test1(model, test_loader, args, cluster=True, ind=None, return_ind=Fals
                 id_map = ind[idx, 0]
                 id_map += args.num_labeled_classes
 
-                targets_new = targets
+                # targets_new = targets <-- this is not deep copy anymore due to NumPy version change
+                targets_new = np.copy(targets)
                 for i in range(args.num_unlabeled_classes2):
                     targets_new[targets == i + args.num_labeled_classes] = id_map[i]
                 targets = targets_new
@@ -645,7 +648,8 @@ def fair_test2(model, test_loader, args, cluster=True, ind=None, return_ind=Fals
                 id_map = ind[idx, 0]
                 id_map += args.num_labeled_classes
 
-                targets_new = targets
+                # targets_new = targets <-- this is not deep copy anymore due to NumPy version change
+                targets_new = np.copy(targets)
                 for i in range(args.num_unlabeled_classes1):
                     targets_new[targets == i + args.num_labeled_classes] = id_map[i]
                 targets = targets_new
@@ -655,7 +659,8 @@ def fair_test2(model, test_loader, args, cluster=True, ind=None, return_ind=Fals
                 id_map = ind[idx, 0]
                 id_map += args.num_labeled_classes+args.num_unlabeled_classes1
 
-                targets_new = targets
+                # targets_new = targets <-- this is not deep copy anymore due to NumPy version change
+                targets_new = np.copy(targets)
                 for i in range(args.num_unlabeled_classes2):
                     targets_new[targets == i + args.num_labeled_classes+args.num_unlabeled_classes1] = id_map[i]
                 targets = targets_new
@@ -747,11 +752,12 @@ if __name__ == "__main__":
     print(args)
 
     # WandB setting
-    wandb_run_name = args.model_name + '_fixl1_s_' + str(args.seed)
-    wandb.init(project='incd_dev_miu',
-               entity=args.wandb_entity,
-               name=wandb_run_name,
-               mode=args.wandb_mode)
+    if args.mode == 'train':
+        wandb_run_name = args.model_name + '_fixl1_s_' + str(args.seed)
+        wandb.init(project='incd_dev_miu',
+                   entity=args.wandb_entity,
+                   name=wandb_run_name,
+                   mode=args.wandb_mode)
 
     if args.mode == 'train' and args.step == 'first':
         num_classes = args.num_labeled_classes + args.num_unlabeled_classes1
@@ -808,6 +814,10 @@ if __name__ == "__main__":
         print("model saved to {}.".format(args.model_dir))
 
         # =============================== Final Test ===============================
+        print("=" * 150)
+        print("\t\t\t\tFirst step test")
+        print("=" * 150)
+
         acc_list = []
 
         print('Head2: test on unlabeled classes')
@@ -933,45 +943,48 @@ if __name__ == "__main__":
 
         # =============================== Final Test ===============================
         print("=" * 150)
-        print("\t\t\t\ttest function 1")
+        print("\t\t\t\tSecond step test")
         print("=" * 150)
+
         acc_list = []
 
         args.head = 'head2'
         args.test_new = 'new1'
         print('Head2: test on unlabeled classes')
-        _, ind1 = fair_test1(model_new1, p_unlabeled_val_loader, args, return_ind=True)
+        _, ind1 = fair_test2(model_new1, p_unlabeled_val_loader, args, return_ind=True)
 
         args.head = 'head3'
         args.test_new = 'new2'
         print('Head3: test on unlabeled classes')
-        _, ind2 = fair_test1(model_new2, unlabeled_val_loader, args, return_ind=True)
+        _, ind2 = fair_test2(model_new2, unlabeled_val_loader, args, return_ind=True)
 
         args.head = 'head1'
         print('Evaluating on Head1')
         acc_all = 0.
 
-        print('test on labeled classes (test split)')
-        acc = fair_test1(model_new2, labeled_test_loader, args, cluster=False)
+        print('test on labeled classes w/o cluster')
+        acc = fair_test2(model_new2, labeled_test_loader, args, cluster=False)
         acc_list.append(acc)
         acc_all = acc_all + acc * args.num_labeled_classes
 
+        args.test_new = 'new1'
         print('test on unlabeled classes New-1 (test split)')
-        acc = fair_test1(model_new2, p_unlabeled_test_loader, args, cluster=False, ind=ind1)
+        acc = fair_test2(model_new2, p_unlabeled_test_loader, args, cluster=False, ind=ind1)
         acc_list.append(acc)
         acc_all = acc_all + acc * args.num_unlabeled_classes1
 
         print('test on unlabeled New-1 (test split) w/ clustering')
-        acc = fair_test1(model_new2, p_unlabeled_test_loader, args, cluster=True)
+        acc = fair_test2(model_new2, p_unlabeled_test_loader, args, cluster=True)
         acc_list.append(acc)
 
+        args.test_new = 'new2'
         print('test on unlabeled classes New-2 (test split)')
-        acc = fair_test1(model_new2, unlabeled_test_loader, args, cluster=False, ind=ind2)
+        acc = fair_test2(model_new2, unlabeled_test_loader, args, cluster=False, ind=ind2)
         acc_list.append(acc)
         acc_all = acc_all + acc * args.num_unlabeled_classes2
 
         print('test on unlabeled New-2 (test split) w/ clustering')
-        acc = fair_test1(model_new2, unlabeled_test_loader, args, cluster=True)
+        acc = fair_test2(model_new2, unlabeled_test_loader, args, cluster=True)
         acc_list.append(acc)
 
         print('test on all classes w/o clustering (test split)')
@@ -979,38 +992,158 @@ if __name__ == "__main__":
         acc_list.append(acc)
 
         print('test on all classes w/ clustering (test split)')
-        acc = fair_test1(model_new2, all_test_loader, args, cluster=True)
+        acc = fair_test2(model_new2, all_test_loader, args, cluster=True)
         acc_list.append(acc)
 
         args.head = 'head2'
         print('Evaluating on Head2')
 
         print('test on unlabeled classes (train split)')
-        acc = fair_test1(model_new2, p_unlabeled_val_loader, args)
+        acc = fair_test2(model_new2, p_unlabeled_val_loader, args)
         acc_list.append(acc)
 
         print('test on unlabeled classes (test split)')
-        acc = fair_test1(model_new2, p_unlabeled_test_loader, args)
+        acc = fair_test2(model_new2, p_unlabeled_test_loader, args)
         acc_list.append(acc)
 
         args.head = 'head3'
         print('Evaluating on Head3')
 
         print('test on unlabeled classes (train split)')
-        acc = fair_test1(model_new2, unlabeled_val_loader, args)
+        acc = fair_test2(model_new2, unlabeled_val_loader, args)
         acc_list.append(acc)
 
         print('test on unlabeled classes (test split)')
-        acc = fair_test1(model_new2, unlabeled_test_loader, args)
+        acc = fair_test2(model_new2, unlabeled_test_loader, args)
         acc_list.append(acc)
 
         print('Acc List: Head1 -> Old, New-1_wo/cluster, New-1_w/cluster, New-2_wo/cluster, New-2_w/cluster, '
               'All_wo_cluster, All_w_cluster, Head2->Train, Test, Head3->Train, Test')
         print(acc_list)
+    elif args.mode == 'eval' and args.step == 'first':
+        num_classes = args.num_labeled_classes + args.num_unlabeled_classes1
+        mix_train_loader = CIFAR100LoaderMix(root=args.dataset_root, batch_size=args.batch_size, split='train',
+                                             aug='twice', shuffle=True, labeled_list=range(args.num_labeled_classes),
+                                             unlabeled_list=range(args.num_labeled_classes, num_classes))
+        unlabeled_val_loader = CIFAR100Loader(root=args.dataset_root, batch_size=args.batch_size, split='train',
+                                              aug=None,
+                                              shuffle=False, target_list=range(args.num_labeled_classes, num_classes))
+        unlabeled_test_loader = CIFAR100Loader(root=args.dataset_root, batch_size=args.batch_size, split='test',
+                                               aug=None,
+                                               shuffle=False, target_list=range(args.num_labeled_classes, num_classes))
+        labeled_train_loader = CIFAR100Loader(root=args.dataset_root, batch_size=args.batch_size, split='train',
+                                              aug=None, shuffle=True, target_list = range(args.num_labeled_classes))
+        labeled_test_loader = CIFAR100Loader(root=args.dataset_root, batch_size=args.batch_size, split='test', aug=None,
+                                             shuffle=False, target_list=range(args.num_labeled_classes))
+        all_test_loader = CIFAR100Loader(root=args.dataset_root, batch_size=args.batch_size, split='test', aug=None,
+                                         shuffle=False, target_list=range(num_classes))
+        # Create the model
+        model = ResNet(BasicBlock, [2, 2, 2, 2], args.num_labeled_classes,
+                       args.num_unlabeled_classes1+args.num_unlabeled_classes2).to(device)
 
-        print("="*150)
-        print("\t\t\t\ttest function 2")
-        print("="*150)
+        model.head2 = nn.Linear(512, args.num_unlabeled_classes1).to(device)
+        model.head1 = nn.Linear(512, num_classes).to(device)  # replace the labeled-class only head-1
+        state_dict = torch.load(args.model_dir)
+        model.load_state_dict(state_dict, strict=False)
+        model.eval()
+
+        print("=" * 150)
+        print("\t\t\t\tFirst step test")
+        print("=" * 150)
+
+        acc_list = []
+
+        print('Head2: test on unlabeled classes')
+        args.head = 'head2'
+        _, ind = fair_test1(model, unlabeled_val_loader, args, return_ind=True)
+
+        print('Evaluating on Head1')
+        args.head = 'head1'
+
+        print('test on labeled classes (test split)')
+        acc = fair_test1(model, labeled_test_loader, args, cluster=False)
+        acc_list.append(acc)
+
+        print('test on unlabeled NEW-1 (test split)')
+        acc = fair_test1(model, unlabeled_test_loader, args, cluster=False, ind=ind)
+        acc_list.append(acc)
+
+        print('test on unlabeled NEW1 (test split) w/ clustering')
+        acc = fair_test1(model, unlabeled_test_loader, args, cluster=True)
+        acc_list.append(acc)
+
+        print('test on all classes w/o clustering (test split)')
+        acc = fair_test1(model, all_test_loader, args, cluster=False, ind=ind)
+        acc_list.append(acc)
+
+        print('test on all classes w/ clustering (test split)')
+        acc = fair_test1(model, all_test_loader, args, cluster=True)
+        acc_list.append(acc)
+
+        print('Evaluating on Head2')
+        args.head = 'head2'
+
+        print('test on unlabeled classes (train split)')
+        acc = fair_test1(model, unlabeled_val_loader, args)
+        acc_list.append(acc)
+
+        print('test on unlabeled classes (test split)')
+        acc = fair_test1(model, unlabeled_test_loader, args)
+        acc_list.append(acc)
+
+        print('Acc List: Head1->Old, New-1_wo_cluster, New-1_w_cluster, All_wo_cluster, All_w_cluster, Head2->Train, Test')
+        print(acc_list)
+    elif args.mode == 'eval' and args.step == 'second':
+        num_classes = args.num_labeled_classes + args.num_unlabeled_classes1 + args.num_unlabeled_classes2
+        mix_train_loader = CIFAR100LoaderMix(root=args.dataset_root, batch_size=args.batch_size, split='train',
+                                             aug='twice', shuffle=True, labeled_list=range(args.num_labeled_classes),
+                                             unlabeled_list=range(args.num_labeled_classes + args.num_unlabeled_classes1,
+                                                                  num_classes))
+        unlabeled_val_loader = CIFAR100Loader(root=args.dataset_root, batch_size=args.batch_size, split='train',
+                                              aug=None, shuffle=False,
+                                              target_list=range(args.num_labeled_classes + args.num_unlabeled_classes1,
+                                                                num_classes))
+        unlabeled_test_loader = CIFAR100Loader(root=args.dataset_root, batch_size=args.batch_size, split='test',
+                                               aug=None, shuffle=False,
+                                               target_list=range(args.num_labeled_classes + args.num_unlabeled_classes1,
+                                                                 num_classes))
+        labeled_train_loader = CIFAR100Loader(root=args.dataset_root, batch_size=args.batch_size, split='train',
+                                              aug=None, shuffle=True, target_list=range(args.num_labeled_classes))
+        labeled_test_loader = CIFAR100Loader(root=args.dataset_root, batch_size=args.batch_size, split='test', aug=None,
+                                             shuffle=False, target_list=range(args.num_labeled_classes))
+        all_test_loader = CIFAR100Loader(root=args.dataset_root, batch_size=args.batch_size, split='test', aug=None,
+                                         shuffle=False, target_list=range(num_classes))
+
+        # Previous step Novel classes dataloader
+        p_unlabeled_val_loader = CIFAR100Loader(root=args.dataset_root, batch_size=args.batch_size, split='train',
+                                                aug=None, shuffle=False,
+                                                target_list=range(args.num_labeled_classes,
+                                                                  args.num_labeled_classes + args.num_unlabeled_classes1))
+        p_unlabeled_test_loader = CIFAR100Loader(root=args.dataset_root, batch_size=args.batch_size, split='test',
+                                                 aug=None, shuffle=False,
+                                                 target_list=range(args.num_labeled_classes,
+                                                                   args.num_labeled_classes + args.num_unlabeled_classes1))
+
+        # create model_new2
+        model_new2 = ResNetTri(BasicBlock, [2, 2, 2, 2], args.num_labeled_classes+args.num_unlabeled_classes1,
+                               args.num_unlabeled_classes1, args.num_unlabeled_classes2).to(device)
+        model_new2.head1 = nn.Linear(512, num_classes).to(device)
+        state_dict2 = torch.load(args.model_dir)
+        model_new2.load_state_dict(state_dict2, strict=False)
+        model_new2.eval()
+
+        # Create the model_new1
+        model_new1 = ResNet(BasicBlock, [2, 2, 2, 2], args.num_labeled_classes,
+                            args.num_unlabeled_classes1 + args.num_unlabeled_classes2).to(device)
+        model_new1.head1 = nn.Linear(512, args.num_labeled_classes+args.num_unlabeled_classes1).to(device)
+        model_new1.head2 = nn.Linear(512, args.num_unlabeled_classes1).to(device)
+        state_dict1 = torch.load(args.first_step_dir)
+        model_new1.load_state_dict(state_dict1, strict=False)
+        model_new1.eval()
+
+        print("=" * 150)
+        print("\t\t\t\tSecond step test")
+        print("=" * 150)
 
         acc_list = []
 
