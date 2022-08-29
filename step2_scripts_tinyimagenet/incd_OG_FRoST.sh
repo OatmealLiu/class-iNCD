@@ -9,7 +9,7 @@ python -W ignore incd_ablation_expt.py \
         --weight_decay 1e-4 \
         --step_size 170 \
         --batch_size 128 \
-        --epochs 200 \
+        --epochs 300 \
         --rampup_length 150 \
         --rampup_coefficient 50 \
         --num_unlabeled_classes 20 \
