@@ -2,6 +2,7 @@
 > Class-incremental Novel Class Discovery (ECCV2022)
 >
 > Subhankar Roy†, Mingxuan Liu†, Zhun Zhong, Nicu Sebe, and Elisa Ricci
+>
 > † equal contribution
 
 This Github repository presents the PyTorch implementation for the paper **Class-incremental Novel Class Discovery** \[[arXiv](https://arxiv.org/abs/2207.08605)\], accepted with a poster presentation at European Conference on Computer Vision (ECCV) held at Tel Aviv International Convention Center on October 23-27, 2022.
